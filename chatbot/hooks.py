@@ -20,9 +20,7 @@ app_license = "mit"
 # 		"has_permission": "chatbot.api.permission.has_app_permission"
 # 	}
 # ]
-app_include_js = ["/assets/chatbot/js/ai_chat.js",
-                "/assets/chatbot/js/field_quick_edit.js"
-]
+app_include_js = ["/assets/chatbot/js/field_quick_edit.js"]
 
 patches = [
     "chatbot.patches.add_allow_quick_edit.execute"
@@ -255,4 +253,3 @@ patches = [
 # ------------
 # List of apps whose translatable strings should be excluded from this app's translations.
 # ignore_translatable_strings_from = []
-

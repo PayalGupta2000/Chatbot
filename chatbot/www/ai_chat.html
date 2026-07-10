@@ -1,153 +1,120 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>AI Chat</title>
-
+    <title>AI Assistant</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="csrf-token" content="{{ csrf_token }}">
-
-    <!-- Markdown -->
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
-
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Playfair+Display:wght@600&display=swap" rel="stylesheet">
     <style>
-body {
-    margin: 0;
-    font-family: 'Inter', sans-serif;
-    background: #0b1220;
-    color: white;
-}
-
-.app {
-    display: flex;
-    height: 100vh;
-}
-
-/* SIDEBAR */
-.sidebar {
-    width: 260px;
-    background: #0a0f1c;
-    padding: 15px;
-    overflow-y: auto;
-}
-
-.sidebar h3 {
-    margin: 0 0 10px;
-}
-
-#history div {
-    padding: 10px;
-    margin: 6px 0;
-    background: #111827;
-    border-radius: 8px;
-    cursor: pointer;
-}
-
-/* CHAT AREA */
-.container {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    padding: 20px;
-    /* 👇 limit width */
-    max-width: 900px;
-
-    /* center feel */
-    margin: 0 auto;
-}
-
-/* CHAT BOX */
-#chat-box {
-    flex: 1;
-    overflow-y: auto;
-    padding: 15px;
-    border-radius: 12px;
-    background: whitesmoke;
-}
-
-/* MESSAGE */
-.msg {
-    padding: 10px 12px;
-    margin: 8px 0;
-    border-radius: 10px;
-    max-width: 75%;
-    animation: fadeIn 0.2s ease-in;
-}
-
-.user {
-    background: black;
-    margin-left: auto;
-}
-
-.ai {
-    background: #0a0f1c;
-    margin-right: auto;
-}
-
-/* INPUT */
-.input-box {
-    display: flex;
-    gap: 10px;
-    margin-top: 10px;
-}
-
-#msg {
-    flex: 1;
-    padding: 12px;
-    border-radius: 8px;
-    border: none;
-}
-
-button {
-    padding: 12px 14px;
-    border: none;
-    background: black;
-    color: white;
-    border-radius: 8px;
-    cursor: pointer;
-}
-
-.copy-btn {
-    float: right;
-    font-size: 11px;
-    background: #111827;
-    border: 1px solid #374151;
-}
-
-/* ANIMATION */
-@keyframes fadeIn {
-    from {opacity:0; transform: translateY(5px);}
-    to {opacity:1; transform: translateY(0);}
-}
+        :root { --ink: #1d2939; --muted: #667085; --line: #e8e5df; --paper: #fffdf9; --canvas: #f5f3ee; --navy: #162f31; --teal: #1c7168; --teal-soft: #e1f1eb; --shadow: 0 18px 45px rgba(27, 46, 44, .10); }
+        * { box-sizing: border-box; }
+        body { margin: 0; min-width: 320px; color: var(--ink); background: var(--canvas); font-family: "DM Sans", sans-serif; }
+        button, textarea { font: inherit; }
+        button { cursor: pointer; }
+        .app { display: flex; min-height: 100vh; }
+        .sidebar { display: flex; flex: 0 0 274px; flex-direction: column; padding: 22px 16px; color: #eaf4f1; background: var(--navy); }
+        .brand { display: flex; align-items: center; gap: 10px; padding: 3px 8px 23px; font-weight: 700; letter-spacing: -.02em; }
+        .brand-mark { display: grid; width: 30px; height: 30px; place-items: center; border-radius: 9px; color: var(--navy); background: #c6e5d6; font-family: "Playfair Display", serif; font-size: 18px; }
+        .new-chat { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; padding: 11px; border: 1px solid rgba(225,241,235,.22); border-radius: 9px; color: #f7fcfa; background: rgba(255,255,255,.08); transition: background .2s; }
+        .new-chat:hover { background: rgba(255,255,255,.15); }
+        .history-label { margin: 31px 8px 10px; color: #a9c0bb; font-size: 11px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; }
+        #history { overflow-y: auto; }
+        .history-item { display: block; overflow: hidden; width: 100%; padding: 10px 11px; border: 0; border-radius: 8px; color: #d5e2de; background: transparent; font-size: 14px; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+        .history-item:hover, .history-item.active { background: rgba(255,255,255,.12); }
+        .sidebar-foot { margin-top: auto; padding: 18px 8px 2px; border-top: 1px solid rgba(225,241,235,.16); color: #a9c0bb; font-size: 12px; }
+        .workspace { display: flex; flex: 1; flex-direction: column; min-width: 0; }
+        .topbar { display: flex; align-items: center; justify-content: space-between; height: 70px; padding: 0 clamp(22px, 5vw, 72px); border-bottom: 1px solid var(--line); background: rgba(255,253,249,.82); }
+        .topbar h1 { margin: 0; font-size: 15px; font-weight: 600; }
+        .topbar-actions { display: flex; align-items: center; gap: 16px; }
+        .export-chat { padding: 6px 9px; border: 1px solid #d7e4df; border-radius: 7px; color: #37635e; background: #fffdf9; font-size: 12px; font-weight: 600; }
+        .export-chat:hover { border-color: var(--teal); color: var(--teal); }
+        .status { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 13px; }
+        .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #4bb090; box-shadow: 0 0 0 3px #dff3ea; }
+        .chat-shell { display: flex; flex: 1; flex-direction: column; width: min(100%, 920px); margin: 0 auto; padding: clamp(24px, 4vw, 48px) clamp(16px, 4vw, 38px) 22px; }
+        #chat-box { display: flex; flex: 1; flex-direction: column; gap: 20px; overflow-y: auto; padding: 0 2px 28px; scroll-behavior: smooth; }
+        .welcome { max-width: 620px; margin: auto auto 22px; text-align: center; }
+        .welcome .eyebrow { margin: 0 0 10px; color: var(--teal); font-size: 12px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+        .welcome h2 { margin: 0; color: #213835; font-family: "Playfair Display", serif; font-size: clamp(31px, 4vw, 45px); font-weight: 600; letter-spacing: -.03em; }
+        .welcome p { margin: 13px auto 24px; color: var(--muted); line-height: 1.6; }
+        .suggestions { display: flex; flex-wrap: wrap; justify-content: center; gap: 9px; }
+        .suggestion { padding: 9px 13px; border: 1px solid #d7e4df; border-radius: 999px; color: #37635e; background: #fbfffd; font-size: 13px; transition: all .2s; }
+        .suggestion:hover { border-color: var(--teal); color: var(--teal); background: var(--teal-soft); }
+        .message-row { display: flex; gap: 10px; max-width: 86%; animation: rise .22s ease-out; }
+        .message-row.user { align-self: flex-end; flex-direction: row-reverse; }
+        .avatar { display: grid; flex: 0 0 30px; width: 30px; height: 30px; place-items: center; border-radius: 50%; color: #fff; background: var(--teal); font-size: 12px; font-weight: 700; }
+        .message-row.user .avatar { background: #667085; }
+        .msg { padding: 12px 14px; border-radius: 4px 15px 15px; color: #263b3a; background: #fff; box-shadow: 0 2px 5px rgba(27,46,44,.04); line-height: 1.6; }
+        .message-row.user .msg { border-radius: 15px 4px 15px 15px; color: #fff; background: var(--navy); }
+        .message-row.user .msg { white-space: pre-wrap; }
+        .message-row.ai .msg > :first-child { margin-top: 0; }
+        .message-row.ai .msg > :last-child { margin-bottom: 0; }
+        .message-row.ai .msg p { margin: 0 0 10px; }
+        .message-row.ai .msg h1, .message-row.ai .msg h2, .message-row.ai .msg h3 { margin: 16px 0 7px; color: #183a36; line-height: 1.25; }
+        .message-row.ai .msg h1 { font-size: 20px; } .message-row.ai .msg h2 { font-size: 17px; } .message-row.ai .msg h3 { font-size: 15px; }
+        .message-row.ai .msg .reply-section { margin: 12px 0; padding: 12px 13px 2px; border: 1px solid #dbe9e3; border-left: 3px solid #5ca898; border-radius: 8px; background: #f7fbf9; }
+        .message-row.ai .msg .reply-section h3 { margin: 0 0 6px; color: #17594f; font-size: 14px; }
+        .message-row.ai .msg .reply-section ul, .message-row.ai .msg .reply-section ol { margin-top: 5px; }
+        .message-row.ai .msg ul, .message-row.ai .msg ol { margin: 7px 0 11px; padding-left: 21px; }
+        .message-row.ai .msg li + li { margin-top: 4px; }
+        .message-row.ai .msg code { padding: 2px 5px; border-radius: 4px; color: #17594f; background: #e6f2ee; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .9em; }
+        .message-row.ai .msg pre { overflow-x: auto; margin: 10px 0; padding: 12px; border-radius: 8px; color: #edf6f3; background: #183a36; }
+        .message-row.ai .msg pre code { padding: 0; color: inherit; background: transparent; }
+        .message-row.ai .msg blockquote { margin: 10px 0; padding-left: 11px; border-left: 3px solid #8fc6b8; color: #586d6a; }
+        .message-actions { display: flex; margin-top: 7px; }
+        .copy-btn { padding: 0; border: 0; color: var(--muted); background: transparent; font-size: 12px; }
+        .copy-btn:hover { color: var(--teal); }
+        .typing { display: flex; gap: 4px; align-items: center; min-width: 66px; height: 38px; }
+        .typing span { width: 6px; height: 6px; border-radius: 50%; background: #78a49b; animation: pulse 1s infinite alternate; }
+        .typing span:nth-child(2) { animation-delay: .2s; } .typing span:nth-child(3) { animation-delay: .4s; }
+        .composer { display: flex; align-items: flex-end; gap: 9px; padding: 9px 10px 9px 15px; border: 1px solid #d8ddd8; border-radius: 15px; background: var(--paper); box-shadow: var(--shadow); }
+        #msg { display: block; flex: 1; min-height: 28px; max-height: 120px; padding: 4px 0; resize: none; border: 0; outline: 0; color: var(--ink); background: transparent; line-height: 1.45; }
+        #msg::placeholder { color: #98a2b3; }
+        .icon-button, .send-button { display: grid; width: 37px; height: 37px; place-items: center; border: 0; border-radius: 10px; }
+        .icon-button { color: var(--muted); background: transparent; } .icon-button:hover, .icon-button.recording { color: var(--teal); background: var(--teal-soft); }
+        .icon-button.recording { animation: recording 1s infinite alternate; }
+        .send-button { color: #fff; background: var(--teal); } .send-button:hover { background: #145b54; } .send-button:disabled { cursor: not-allowed; opacity: .5; }
+        .composer-note { margin: 10px 0 0; color: #98a2b3; font-size: 11px; text-align: center; }
+        @keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+        @keyframes pulse { to { opacity: .28; transform: translateY(-2px); } }
+        @keyframes recording { to { box-shadow: 0 0 0 5px rgba(28,113,104,.15); } }
+        @media (max-width: 720px) { .sidebar { display: none; } .topbar { height: 60px; } .chat-shell { min-height: calc(100vh - 60px); padding-top: 24px; } .message-row { max-width: 94%; } }
     </style>
 </head>
-
 <body>
-
-<div class="app">
-
-    <!-- SIDEBAR -->
-    <div class="sidebar">
-        <h3>💬 Chats</h3>
-        <div id="history"></div>
-    </div>
-
-    <!-- CHAT -->
-    <div class="container">
-
-        <div id="chat-box"></div>
-
-        <div class="input-box">
-            <input id="msg" placeholder="Type message..." />
-            <button onclick="startVoice()">🎤</button>
-            <button onclick="sendMsg()">Send</button>
-        </div>
-
-    </div>
-
-</div>
-
-<script src="/assets/chatbot/js/ai_chat.js"></script>
-
+    <main class="app">
+        <aside class="sidebar" aria-label="Chat navigation">
+            <div class="brand"><span class="brand-mark">a</span> Acme Assistant</div>
+            <button class="new-chat" id="new-chat" type="button"><span>＋</span> New conversation</button>
+            <p class="history-label">Recent conversations</p>
+            <div id="history" aria-label="Conversation history"></div>
+            <div class="sidebar-foot">Your conversations stay in this session.</div>
+        </aside>
+        <section class="workspace">
+            <header class="topbar"><h1>AI Assistant</h1><div class="topbar-actions"><button class="export-chat" id="export-chat" type="button">Export chat</button><div class="status"><span class="status-dot"></span> Ready to help</div></div></header>
+            <div class="chat-shell">
+                <div id="chat-box" aria-live="polite">
+                    <section class="welcome" id="welcome">
+                        <p class="eyebrow">Your work companion</p>
+                        <h2>What can I help you<br>move forward today?</h2>
+                        <p>Ask a question, explore an idea, or get a quick hand with your next task.</p>
+                        <div class="suggestions">
+                            <button class="suggestion" type="button">Help me plan my day</button>
+                            <button class="suggestion" type="button">Summarize a topic</button>
+                            <button class="suggestion" type="button">Brainstorm ideas</button>
+                        </div>
+                    </section>
+                </div>
+                <form class="composer" id="chat-form">
+                    <textarea id="msg" rows="1" placeholder="Message the assistant…" aria-label="Message the assistant"></textarea>
+                    <button class="icon-button" id="voice-button" type="button" aria-label="Use voice input" title="Use voice input">⌁</button>
+                    <button class="send-button" id="send-button" type="submit" aria-label="Send message" title="Send message">↑</button>
+                </form>
+                <p class="composer-note">AI can make mistakes. Check important information.</p>
+            </div>
+        </section>
+    </main>
+    <script src="/assets/chatbot/js/ai_chat.js"></script>
 </body>
 </html>
