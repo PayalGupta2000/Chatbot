@@ -20,6 +20,13 @@ app_license = "mit"
 # 		"has_permission": "chatbot.api.permission.has_app_permission"
 # 	}
 # ]
+app_include_js = ["/assets/chatbot/js/ai_chat.js",
+                "/assets/chatbot/js/field_quick_edit.js"
+]
+
+patches = [
+    "chatbot.patches.add_allow_quick_edit.execute"
+]
 
 # Includes in <head>
 # ------------------
@@ -43,7 +50,9 @@ app_license = "mit"
 # page_js = {"page" : "public/js/file.js"}
 
 # include js in doctype views
-# doctype_js = {"doctype" : "public/js/doctype.js"}
+
+
+
 # doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
 # doctype_calendar_js = {"doctype" : "public/js/doctype_calendar.js"}
