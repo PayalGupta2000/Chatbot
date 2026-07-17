@@ -1,84 +1,65 @@
-import re
-
 import frappe
 import google.generativeai as genai
+
+from chatbot.tools import ToolRegistry, extract_function_call
 
 genai.configure(api_key=frappe.conf.get("gemini_api_key"))
 
 model = genai.GenerativeModel("gemini-2.5-flash")
 
 
-def is_lead_client_script_request(message):
-	request = message.lower()
-	action_words = ("add", "apply", "build", "create", "make", "set", "write")
-	has_action = any(word in request for word in action_words)
-	is_client_script = "client script" in request
-	is_email_validation = "email" in request and "validation" in request
-	return "lead" in request and has_action and (is_client_script or is_email_validation)
+SYSTEM_PROMPT = """You are an AI assistant inside the ERPNext system.
+
+## Your Capabilities
+You can answer questions about ERPNext, help users with tasks, and perform
+actions by calling tools when the user asks you to do something.
+
+## When to Use Tools
+- **Import data**: If the user says "import this excel", "import data",
+  "import this file", or provides a file to import — use the `import_data` tool.
+- **Create an API**: If the user says "create an api", "make an endpoint",
+  "expose this as an api" — use the `create_api` tool.
+- **Client Script**: If the user asks to add form behavior, validation,
+  field automation, or custom UI logic on any DocType form — use the
+  `create_client_script` tool. The user must specify which DocType.
+
+## Guidelines
+- Always ask for missing required information before calling a tool.
+- For import requests, ask for the DocType and file path if not specified.
+- For API requests, help the user write the Python code if they are unsure.
+- Keep explanations concise but informative.
+- Use Markdown formatting in your replies.
+- Start long answers with a short summary.
+- Use headings (##) for major sections.
+- Use bullet points or numbered lists.
+- For ERPNext how-to questions, separate navigation, required fields,
+  and next steps.
+
+## Conversation History
+"""
 
 
-def extract_javascript(response):
-	match = re.search(r"```(?:javascript|js)?\s*(.*?)```", response, flags=re.IGNORECASE | re.DOTALL)
-	return (match.group(1) if match else response).strip()
-
-
-def generate_lead_client_script(request):
-	prompt = f"""
-		Create a Frappe Client Script for the Lead DocType based on this request:
-		{request}
-
-		Return only executable JavaScript in a fenced ```javascript code block.
-		Use frappe.ui.form.on("Lead", {{ ... }}). Use supported form events such as onload and validate.
-		Do not include explanations, HTML, server-side code, imports, network requests, or destructive actions.
-	"""
-	response = model.generate_content(prompt)
-	script = extract_javascript(response.text if response and response.text else "")
-	if not script or "frappe.ui.form.on" not in script or "Lead" not in script:
-		frappe.throw("The assistant could not generate a valid Lead Client Script.")
-	return script
-
-
-def create_lead_client_script(request):
-	if frappe.session.user == "Guest" or not frappe.has_permission("Client Script", "create"):
-		return None
-
-	script = generate_lead_client_script(request)
-	name = f"AI Lead Script {frappe.generate_hash(length=8)}"
-	doc = frappe.get_doc(
-		{
-			"doctype": "Client Script",
-			"name": name,
-			"dt": "Lead",
-			"view": "Form",
-			"enabled": 1,
-			"script": script,
-		}
-	)
-	doc.insert()
-	return doc
-
-
-# ---------------- MEMORY ----------------
 def save_memory(user, message, response, context=None, tool_used=None):
+	frappe.get_doc(
+		{
+			"doctype": "AI Chat Memory",
+			"user": user,
+			"message": message,
+			"conversation": response,
+			"context": context,
+			"tool_used": tool_used,
+		}
+	).insert(ignore_permissions=True)
 
-    frappe.get_doc({
-        "doctype": "AI Chat Memory",
-        "user": user,
-        "message": message,
-        "conversation": response,   # 👈 AI reply stored here
-        "context": context,
-        "tool_used": tool_used
-    }).insert(ignore_permissions=True)
 
 def get_memory(user):
-
-    return frappe.get_all(
-        "AI Chat Memory",
-        filters={"user": user},
-        fields=["message", "conversation", "context", "tool_used"],
-        order_by="creation desc",
-        limit=5
-    )
+	return frappe.get_all(
+		"AI Chat Memory",
+		filters={"user": user},
+		fields=["message", "conversation", "context", "tool_used"],
+		order_by="creation desc",
+		limit=5,
+	)
 
 
 @frappe.whitelist(allow_guest=True)
@@ -88,40 +69,9 @@ def chat(message):
 	if not message:
 		frappe.throw("Please enter a message.")
 
-	if is_lead_client_script_request(message):
-		try:
-			client_script = create_lead_client_script(message)
-			if client_script:
-				reply = (
-					f"Created and enabled the Client Script **{client_script.name}** for the Lead form. "
-					"Refresh the Lead form to use it."
-				)
-				save_memory(user=user, message=message, response=reply, tool_used="Create Client Script")
-				return {
-					"reply": reply,
-					"action": {"type": "client_script_created", "name": client_script.name, "doctype": "Lead"},
-				}
-			return {"reply": "I need permission to create Client Script records before I can apply that change."}
-		except Exception:
-			frappe.log_error(frappe.get_traceback(), "AI Client Script Creation Error")
-			return {"reply": "I couldn't create the Lead Client Script. Please try again or check your permissions."}
-
 	memory = get_memory(user)
 
-	prompt = """
-		You are an AI Assistant inside ERPNext system.
-
-		Rules:
-		- Start long answers with a short summary
-		- Use Markdown headings (##) for each major section or step group
-		- Use bullet points or numbered lists below headings
-		- Keep paragraphs short and avoid long single blocks of text
-		- For ERPNext how-to questions, separate navigation, required fields, and next steps
-
-		Use memory to answer correctly.
-
-		Conversation history:
-		"""
+	prompt = SYSTEM_PROMPT
 
 	for row in reversed(memory):
 		prompt += f"\nUser: {row.message}"
@@ -129,17 +79,43 @@ def chat(message):
 
 	prompt += f"\nUser: {message}\nAssistant:"
 
-	response = model.generate_content(prompt)
+	tools = ToolRegistry.get_function_declarations()
+
+	try:
+		if tools:
+			response = model.generate_content(prompt, tools=tools)
+		else:
+			response = model.generate_content(prompt)
+	except Exception as e:
+		frappe.log_error(frappe.get_traceback(), "AI Chat Generation Error")
+		return {"reply": "I encountered an error processing your request. Please try again."}
+
+	function_call = extract_function_call(response)
+
+	if function_call:
+		tool_name = function_call.name
+		tool_args = {key: value for key, value in function_call.args.items()}
+
+		try:
+			result = ToolRegistry.execute(tool_name, **tool_args)
+			reply = result.get("reply", "Action completed.")
+			action = result.get("action")
+
+			save_memory(
+				user=user,
+				message=message,
+				response=reply,
+				tool_used=tool_name,
+			)
+
+			return {"reply": reply, "action": action}
+
+		except Exception as e:
+			frappe.log_error(frappe.get_traceback(), f"AI Tool Execution Error: {tool_name}")
+			return {"reply": f"I tried to {tool_name.replace('_', ' ')} but ran into an error: {str(e)}"}
 
 	reply = response.text if response and response.text else "No response"
 
-	try:
-		save_memory(
-			user=user,
-			message=message,
-			response=reply,
-		)
-	except Exception as error:
-		frappe.log_error(str(error), "AI Memory Save Error")
+	save_memory(user=user, message=message, response=reply)
 
 	return {"reply": reply}

@@ -11,7 +11,7 @@ let conversations = loadConversations();
 let activeConversationId = conversations[0]?.id || createConversation();
 
 function scrollToBottom() {
-    chatBox.scrollTo({ top: chatBox.scrollHeight, behavior: "smooth" });
+	chatBox.scrollTo({ top: chatBox.scrollHeight, behavior: "smooth" });
 }
 
 function removeWelcome() {
@@ -60,10 +60,10 @@ function activeConversation() {
 	return conversations.find((conversation) => conversation.id === activeConversationId);
 }
 
-function addToConversation(role, content) {
+function addToConversation(role, content, action) {
 	const conversation = activeConversation();
 	if (!conversation) return;
-	conversation.messages.push({ role, content });
+	conversation.messages.push({ role, content, action });
 	if (role === "user" && conversation.messages.length === 1) {
 		conversation.title = content.replace(/\s+/g, " ").slice(0, 42) || "New conversation";
 	}
@@ -74,118 +74,160 @@ function addToConversation(role, content) {
 }
 
 function escapeHtml(value) {
-    const element = document.createElement("div");
-    element.textContent = value;
-    return element.innerHTML;
+	const element = document.createElement("div");
+	element.textContent = value;
+	return element.innerHTML;
 }
 
 function formatAssistantReply(reply) {
-    const escaped = escapeHtml(String(reply)).replace(/\r\n/g, "\n");
-    const codeBlocks = [];
-    const withoutCodeBlocks = escaped.replace(/```([^`]*)```/g, (_, code) => {
-        codeBlocks.push(`<pre><code>${code.trim()}</code></pre>`);
-        return `@@CODE_${codeBlocks.length - 1}@@`;
-    });
-    const inline = (text) => text
-        .replace(/`([^`]+)`/g, "<code>$1</code>")
-        .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
-        .replace(/\*([^*]+)\*/g, "<em>$1</em>");
-    const lines = withoutCodeBlocks.split("\n");
-    const output = [];
-    let listType = null;
-    let sectionOpen = false;
+	const escaped = escapeHtml(String(reply)).replace(/\r\n/g, "\n");
+	const codeBlocks = [];
+	const withoutCodeBlocks = escaped.replace(/```([^`]*)```/g, (_, code) => {
+		codeBlocks.push(`<pre><code>${code.trim()}</code></pre>`);
+		return `@@CODE_${codeBlocks.length - 1}@@`;
+	});
+	const inline = (text) => text
+		.replace(/`([^`]+)`/g, "<code>$1</code>")
+		.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+		.replace(/\*([^*]+)\*/g, "<em>$1</em>");
+	const lines = withoutCodeBlocks.split("\n");
+	const output = [];
+	let listType = null;
+	let sectionOpen = false;
 
-    const closeList = () => {
-        if (listType) output.push(`</${listType}>`);
-        listType = null;
-    };
+	const closeList = () => {
+		if (listType) output.push(`</${listType}>`);
+		listType = null;
+	};
 
-    const closeSection = () => {
-        closeList();
-        if (sectionOpen) output.push("</section>");
-        sectionOpen = false;
-    };
+	const closeSection = () => {
+		closeList();
+		if (sectionOpen) output.push("</section>");
+		sectionOpen = false;
+	};
 
-    lines.forEach((line, index) => {
-        const heading = line.match(/^(#{1,3})\s+(.+)$/);
-        const bullet = line.match(/^\s*[-*]\s+(.+)$/);
-        const numbered = line.match(/^\s*\d+\.\s+(.+)$/);
-        const nextLine = lines.slice(index + 1).find((item) => item.trim());
-        const sectionTitle = line.match(/^(.{3,90}):\s*$/);
-        const isSectionTitle = sectionTitle && /^\s*(?:[-*]|\d+\.)\s+/.test(nextLine || "");
-        if (heading) {
-            closeSection();
-            const level = heading[1].length;
-            output.push(`<h${level}>${inline(heading[2])}</h${level}>`);
-        } else if (isSectionTitle) {
-            closeSection();
-            sectionOpen = true;
-            output.push(`<section class="reply-section"><h3>${inline(sectionTitle[1])}</h3>`);
-        } else if (bullet || numbered) {
-            const nextType = bullet ? "ul" : "ol";
-            if (listType && listType !== nextType) closeList();
-            if (!listType) { output.push(`<${nextType}>`); listType = nextType; }
-            output.push(`<li>${inline((bullet || numbered)[1])}</li>`);
-        } else if (line.startsWith("&gt; ")) {
-            closeList();
-            output.push(`<blockquote>${inline(line.slice(5))}</blockquote>`);
-        } else if (line.startsWith("@@CODE_")) {
-            closeList();
-            output.push(line);
-        } else if (line.trim()) {
-            closeList();
-            output.push(`<p>${inline(line)}</p>`);
-        } else {
-            closeList();
-        }
-    });
-    closeSection();
-    return output.join("").replace(/@@CODE_(\d+)@@/g, (_, index) => codeBlocks[index]);
+	lines.forEach((line, index) => {
+		const heading = line.match(/^(#{1,3})\s+(.+)$/);
+		const bullet = line.match(/^\s*[-*]\s+(.+)$/);
+		const numbered = line.match(/^\s*\d+\.\s+(.+)$/);
+		const nextLine = lines.slice(index + 1).find((item) => item.trim());
+		const sectionTitle = line.match(/^(.{3,90}):\s*$/);
+		const isSectionTitle = sectionTitle && /^\s*(?:[-*]|\d+\.)\s+/.test(nextLine || "");
+		if (heading) {
+			closeSection();
+			const level = heading[1].length;
+			output.push(`<h${level}>${inline(heading[2])}</h${level}>`);
+		} else if (isSectionTitle) {
+			closeSection();
+			sectionOpen = true;
+			output.push(`<section class="reply-section"><h3>${inline(sectionTitle[1])}</h3>`);
+		} else if (bullet || numbered) {
+			const nextType = bullet ? "ul" : "ol";
+			if (listType && listType !== nextType) closeList();
+			if (!listType) { output.push(`<${nextType}>`); listType = nextType; }
+			output.push(`<li>${inline((bullet || numbered)[1])}</li>`);
+		} else if (line.startsWith("&gt; ")) {
+			closeList();
+			output.push(`<blockquote>${inline(line.slice(5))}</blockquote>`);
+		} else if (line.startsWith("@@CODE_")) {
+			closeList();
+			output.push(line);
+		} else if (line.trim()) {
+			closeList();
+			output.push(`<p>${inline(line)}</p>`);
+		} else {
+			closeList();
+		}
+	});
+	closeSection();
+	return output.join("").replace(/@@CODE_(\d+)@@/g, (_, index) => codeBlocks[index]);
+}
+
+function createActionCard(action) {
+	if (!action) return "";
+	const card = document.createElement("div");
+	card.className = "action-card";
+
+	if (action.type === "data_imported") {
+		const success = action.success || 0;
+		const failed = action.failed || 0;
+		card.innerHTML = `
+			<div class="action-card-icon">📊</div>
+			<div class="action-card-body">
+				<strong>Data Import Complete</strong>
+				<div class="action-card-details">
+					<span class="badge success">${success} imported</span>
+					${failed ? `<span class="badge error">${failed} failed</span>` : ""}
+					<span>DocType: ${escapeHtml(action.doctype)}</span>
+				</div>
+			</div>`;
+	} else if (action.type === "api_created") {
+		card.innerHTML = `
+			<div class="action-card-icon">🔌</div>
+			<div class="action-card-body">
+				<strong>API Endpoint Created</strong>
+				<div class="action-card-details">
+					<code>${escapeHtml(action.endpoint_url)}</code>
+				</div>
+			</div>`;
+	} else if (action.type === "client_script_created") {
+		card.innerHTML = `
+			<div class="action-card-icon">📜</div>
+			<div class="action-card-body">
+				<strong>Client Script Created</strong>
+				<div class="action-card-details">
+					<span>${escapeHtml(action.name)}</span>
+					<span>DocType: ${escapeHtml(action.doctype)}</span>
+				</div>
+			</div>`;
+	}
+
+	return card;
 }
 
 function createMessage(content, role, isTyping = false) {
-    removeWelcome();
-    const row = document.createElement("div");
-    row.className = `message-row ${role}`;
-    const avatar = document.createElement("div");
-    avatar.className = "avatar";
-    avatar.textContent = role === "user" ? "You" : "AI";
-    const bubble = document.createElement("div");
-    bubble.className = "msg";
+	removeWelcome();
+	const row = document.createElement("div");
+	row.className = `message-row ${role}`;
+	const avatar = document.createElement("div");
+	avatar.className = "avatar";
+	avatar.textContent = role === "user" ? "You" : "AI";
+	const bubble = document.createElement("div");
+	bubble.className = "msg";
 
-    if (isTyping) {
-        bubble.classList.add("typing");
-        bubble.innerHTML = "<span></span><span></span><span></span>";
-    } else {
-        bubble.textContent = content;
-    }
+	if (isTyping) {
+		bubble.classList.add("typing");
+		bubble.innerHTML = "<span></span><span></span><span></span>";
+	} else {
+		bubble.textContent = content;
+	}
 
-    const contentWrap = document.createElement("div");
-    contentWrap.appendChild(bubble);
-    row.append(avatar, contentWrap);
-    chatBox.appendChild(row);
-    scrollToBottom();
-    return { row, bubble, contentWrap };
+	const contentWrap = document.createElement("div");
+	contentWrap.appendChild(bubble);
+	row.append(avatar, contentWrap);
+	chatBox.appendChild(row);
+	scrollToBottom();
+	return { row, bubble, contentWrap };
 }
 
 function addCopyButton(contentWrap, text) {
-    const actions = document.createElement("div");
-    actions.className = "message-actions";
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "copy-btn";
-    button.textContent = "Copy response";
-    button.addEventListener("click", async () => {
-        try {
-            await navigator.clipboard.writeText(text);
-            button.textContent = "Copied";
-            setTimeout(() => { button.textContent = "Copy response"; }, 1500);
-        } catch {
-            button.textContent = "Copy unavailable";
-        }
-    });
-    actions.appendChild(button);
-    contentWrap.appendChild(actions);
+	const actions = document.createElement("div");
+	actions.className = "message-actions";
+	const button = document.createElement("button");
+	button.type = "button";
+	button.className = "copy-btn";
+	button.textContent = "Copy response";
+	button.addEventListener("click", async () => {
+		try {
+			await navigator.clipboard.writeText(text);
+			button.textContent = "Copied";
+			setTimeout(() => { button.textContent = "Copy response"; }, 1500);
+		} catch {
+			button.textContent = "Copy unavailable";
+		}
+	});
+	actions.appendChild(button);
+	contentWrap.appendChild(actions);
 }
 
 function addRetryButton(contentWrap, message, conversationId) {
@@ -211,9 +253,9 @@ function addRetryButton(contentWrap, message, conversationId) {
 }
 
 function setComposerState(sending) {
-    isSending = sending;
-    sendButton.disabled = sending;
-    sendButton.textContent = sending ? "…" : "↑";
+	isSending = sending;
+	sendButton.disabled = sending;
+	sendButton.textContent = sending ? "…" : "↑";
 }
 
 function renderHistory() {
@@ -237,9 +279,9 @@ function renderWelcome() {
 			<h2>What can I help you<br>move forward today?</h2>
 			<p>Ask a question, explore an idea, or get a quick hand with your next task.</p>
 			<div class="suggestions">
-				<button class="suggestion" type="button">Help me plan my day</button>
-				<button class="suggestion" type="button">Summarize a topic</button>
-				<button class="suggestion" type="button">Brainstorm ideas</button>
+				<button class="suggestion" type="button">Import data from Excel</button>
+				<button class="suggestion" type="button">Create an API endpoint</button>
+				<button class="suggestion" type="button">Add validation to Lead form</button>
 			</div>
 		</section>`;
 	bindSuggestions();
@@ -252,10 +294,13 @@ function renderConversation() {
 		renderWelcome();
 		return;
 	}
-	conversation.messages.forEach(({ role, content }) => {
+	conversation.messages.forEach(({ role, content, action }) => {
 		const message = createMessage(content, role);
 		if (role === "ai") {
 			message.bubble.innerHTML = formatAssistantReply(content);
+			if (action) {
+				message.contentWrap.appendChild(createActionCard(action));
+			}
 			addCopyButton(message.contentWrap, content);
 		}
 	});
@@ -296,44 +341,48 @@ async function sendMsg(message = messageInput.value.trim()) {
 	if (!message || isSending) return;
 	createMessage(message, "user");
 	addToConversation("user", message);
-    messageInput.value = "";
-    resizeInput();
+	messageInput.value = "";
+	resizeInput();
 	setComposerState(true);
 	const conversationId = activeConversationId;
 	const pending = createMessage("", "ai", true);
 
-    try {
-        const response = await fetch("/api/method/chatbot.ai_agent.chat", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "X-Frappe-CSRF-Token": csrf },
-            body: JSON.stringify({ message }),
-        });
-        const data = await response.json();
-        if (!response.ok) throw new Error(data?.exc || "The assistant could not respond.");
-        const reply = data?.message?.reply || "I’m sorry, I couldn’t generate a response just now.";
+	try {
+		const response = await fetch("/api/method/chatbot.ai_agent.chat", {
+			method: "POST",
+			headers: { "Content-Type": "application/json", "X-Frappe-CSRF-Token": csrf },
+			body: JSON.stringify({ message }),
+		});
+		const data = await response.json();
+		if (!response.ok) throw new Error(data?.exc || "The assistant could not respond.");
+		const reply = data?.message?.reply || "I'm sorry, I couldn't generate a response just now.";
+		const action = data?.message?.action || null;
 		pending.bubble.classList.remove("typing");
 		pending.bubble.innerHTML = formatAssistantReply(reply);
+		if (action) {
+			pending.contentWrap.appendChild(createActionCard(action));
+		}
 		addCopyButton(pending.contentWrap, reply);
-		addToConversation("ai", reply);
+		addToConversation("ai", reply, action);
 	} catch (error) {
 		pending.bubble.classList.remove("typing");
 		pending.bubble.textContent = "Something went wrong while contacting the assistant. Please try again.";
 		addRetryButton(pending.contentWrap, message, conversationId);
-        console.error("Chat request failed:", error);
-    } finally {
-        setComposerState(false);
-        messageInput.focus();
-        scrollToBottom();
-    }
+		console.error("Chat request failed:", error);
+	} finally {
+		setComposerState(false);
+		messageInput.focus();
+		scrollToBottom();
+	}
 }
 
 function resizeInput() {
-    messageInput.style.height = "auto";
-    messageInput.style.height = `${Math.min(messageInput.scrollHeight, 120)}px`;
+	messageInput.style.height = "auto";
+	messageInput.style.height = `${Math.min(messageInput.scrollHeight, 120)}px`;
 }
 
 function startVoice() {
-    const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+	const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 	if (!Recognition) {
 		messageInput.placeholder = "Voice input is not supported in this browser";
 		return;
@@ -351,7 +400,7 @@ function startVoice() {
 		resizeInput();
 		messageInput.focus();
 	};
-	recognition.onerror = () => { messageInput.placeholder = "Couldn’t hear that. Please try again."; };
+	recognition.onerror = () => { messageInput.placeholder = "Couldn't hear that. Please try again."; };
 	recognition.onend = () => {
 		voiceButton.classList.remove("recording");
 		voiceButton.setAttribute("aria-label", "Use voice input");
@@ -366,15 +415,15 @@ function bindSuggestions() {
 }
 
 document.getElementById("chat-form").addEventListener("submit", (event) => {
-    event.preventDefault();
-    sendMsg();
+	event.preventDefault();
+	sendMsg();
 });
 messageInput.addEventListener("input", resizeInput);
 messageInput.addEventListener("keydown", (event) => {
-    if (event.key === "Enter" && !event.shiftKey) {
-        event.preventDefault();
-        sendMsg();
-    }
+	if (event.key === "Enter" && !event.shiftKey) {
+		event.preventDefault();
+		sendMsg();
+	}
 });
 document.getElementById("voice-button").addEventListener("click", startVoice);
 document.getElementById("new-chat").addEventListener("click", startNewConversation);
