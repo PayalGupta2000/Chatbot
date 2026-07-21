@@ -49,6 +49,12 @@ When you receive an image you can:
 - Use bullet points or numbered lists.
 - For ERPNext how-to questions, separate navigation, required fields,
   and next steps.
+- When the user asks you to generate, draw, or create an image, do NOT
+  say you cannot generate images. Instead, offer realistic alternatives:
+  generate SVG code they can view in a browser, write detailed
+  descriptions, create ASCII art, produce HTML/CSS for a visual layout,
+  or generate Mermaid diagram code. Frame it positively ("I can create
+  that as SVG code for you" rather than "I cannot generate images").
 
 ## Conversation History
 """
@@ -77,8 +83,11 @@ def get_memory(user):
 	)
 
 
-def _build_prompt(message, document_content, memory):
+def _build_prompt(message, document_content, memory, target_language=None):
 	prompt = SYSTEM_PROMPT
+
+	if target_language:
+		prompt += f"\n## Language Instruction\nRespond in {target_language}. The user wrote their message in their preferred language — always reply in {target_language} regardless of the language they used.\n"
 
 	if document_content:
 		doc_preview = document_content[:8000]
@@ -92,9 +101,12 @@ def _build_prompt(message, document_content, memory):
 	return prompt
 
 
-def _build_multimodal_content(message, image_data, image_mime_type, document_content, memory):
+def _build_multimodal_content(message, image_data, image_mime_type, document_content, memory, target_language=None):
 	parts = []
 	parts.append(SYSTEM_PROMPT)
+
+	if target_language:
+		parts.append(f"\n## Language Instruction\nRespond in {target_language}. The user wrote their message in their preferred language — always reply in {target_language} regardless of the language they used.\n")
 
 	if document_content:
 		doc_preview = document_content[:8000]
@@ -116,7 +128,7 @@ def _build_multimodal_content(message, image_data, image_mime_type, document_con
 
 
 @frappe.whitelist(allow_guest=True)
-def chat(message, document_content=None, image_data=None, image_mime_type=None):
+def chat(message, document_content=None, image_data=None, image_mime_type=None, target_language=None):
 	user = frappe.session.user or "Guest"
 	message = (message or "").strip()
 	if not message:
@@ -129,10 +141,10 @@ def chat(message, document_content=None, image_data=None, image_mime_type=None):
 
 	try:
 		if has_image:
-			contents = _build_multimodal_content(message, image_data, image_mime_type, document_content, memory)
+			contents = _build_multimodal_content(message, image_data, image_mime_type, document_content, memory, target_language)
 			response = model.generate_content(contents, tools=tools or None)
 		else:
-			prompt = _build_prompt(message, document_content, memory)
+			prompt = _build_prompt(message, document_content, memory, target_language)
 			if tools:
 				response = model.generate_content(prompt, tools=tools)
 			else:

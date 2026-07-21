@@ -1,12 +1,9 @@
 import frappe
-import re
-import json
 from pathlib import Path
 
 
 def parse_file(file_path: str, ext: str) -> str:
 	ext = ext.lower().lstrip(".")
-
 	if ext == "pdf":
 		return _parse_pdf(file_path)
 	elif ext in ("docx", "doc"):
@@ -39,10 +36,7 @@ def _parse_docx(file_path: str) -> str:
 	doc = Document(file_path)
 	parts = [p.text.strip() for p in doc.paragraphs if p.text.strip()]
 	for table in doc.tables:
-		rows = []
-		for row in table.rows:
-			cells = [cell.text.strip() for cell in row.cells]
-			rows.append(" | ".join(cells))
+		rows = [" | ".join(cell.text.strip() for cell in row.cells) for row in table.rows]
 		parts.append("\n".join(rows))
 	return "\n\n".join(parts)
 
@@ -88,8 +82,7 @@ def _parse_pptx(file_path: str) -> str:
 			if shape.has_table:
 				table = shape.table
 				for row in table.rows:
-					cells = [cell.text.strip() for cell in row.cells]
-					slide_text.append(" | ".join(cells))
+					slide_text.append(" | ".join(cell.text.strip() for cell in row.cells))
 		if slide_text:
 			parts.append(f"--- Slide {i} ---\n" + "\n".join(slide_text))
 	return "\n\n".join(parts)
@@ -103,50 +96,47 @@ def _parse_image(file_path: str) -> str:
 
 @frappe.whitelist()
 def upload_file():
-	from frappe.handler import uploadfile
-	uploaded = uploadfile()
-	if not uploaded or not uploaded.get("file_url"):
-		frappe.throw("File upload failed")
+	if "file" not in frappe.request.files:
+		frappe.throw("No file provided")
 
-	file_doc = frappe.get_doc("File", {"file_url": uploaded["file_url"]})
-	if not file_doc:
-		frappe.throw("File not found after upload")
+	frappe_file = frappe.request.files["file"]
+	content = frappe_file.read()
+	file_name = frappe_file.filename or "uploaded_file"
+	ext = Path(file_name).suffix
 
-	ext = Path(file_doc.file_name).suffix
-	file_path = file_doc.get_full_path()
+	file_doc = frappe.get_doc(
+		{
+			"doctype": "File",
+			"file_name": file_name,
+			"is_private": 1,
+			"content": content,
+		}
+	)
+	file_doc.save(ignore_permissions=True)
 
 	try:
-		text = parse_file(file_path, ext)
-	except Exception as e:
+		text = parse_file(file_doc.get_full_path(), ext)
+	except Exception:
 		frappe.log_error(frappe.get_traceback(), "Document Parse Error")
 		text = ""
 
-	content_length = len(text)
-	preview = text[:3000] if text else ""
-	summary_len = 0
-
-	doc_data = {
+	return {
 		"name": file_doc.name,
 		"file_name": file_doc.file_name,
 		"file_url": file_doc.file_url,
 		"file_type": ext.lstrip(".").upper(),
-		"content_length": content_length,
-		"preview": preview,
+		"content_length": len(text),
+		"preview": text[:3000] if text else "",
 		"uploaded_at": str(file_doc.creation),
 	}
-
-	return doc_data
 
 
 @frappe.whitelist()
 def get_document_content(file_name: str):
-	frappe.get_doc("File", file_name).check_permission("read")
-
 	file_doc = frappe.get_doc("File", file_name)
+	file_doc.check_permission("read")
 	ext = Path(file_doc.file_name).suffix
-	file_path = file_doc.get_full_path()
-
-	text = parse_file(file_path, ext)
+	text = parse_file(file_doc.get_full_path(), ext)
 	return {"content": text, "file_name": file_doc.file_name, "length": len(text)}
 
 
@@ -170,9 +160,8 @@ def get_image_data(file_name: str):
 	ext = Path(file_doc.file_name).suffix
 	if not _is_image(ext):
 		frappe.throw("Not an image file")
-	file_path = file_doc.get_full_path()
 	mime_map = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "gif": "image/gif", "bmp": "image/bmp", "webp": "image/webp"}
 	mime = mime_map.get(ext.lower().lstrip("."), "image/png")
-	with open(file_path, "rb") as f:
+	with open(file_doc.get_full_path(), "rb") as f:
 		b64 = base64.b64encode(f.read()).decode("utf-8")
 	return {"data": b64, "mime_type": mime, "file_name": file_doc.file_name}
