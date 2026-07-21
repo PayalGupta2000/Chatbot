@@ -5,10 +5,12 @@ const messageInput = document.getElementById("msg");
 const sendButton = document.getElementById("send-button");
 const historyList = document.getElementById("history");
 const storageKey = "chatbot.conversations.v1";
+const docsKey = "chatbot.documents.v1";
 const maxConversations = 12;
 let isSending = false;
 let conversations = loadConversations();
 let activeConversationId = conversations[0]?.id || createConversation();
+let documents = loadDocuments();
 
 function scrollToBottom() {
 	chatBox.scrollTo({ top: chatBox.scrollHeight, behavior: "smooth" });
@@ -170,14 +172,25 @@ function createActionCard(action) {
 					<code>${escapeHtml(action.endpoint_url)}</code>
 				</div>
 			</div>`;
-	} else if (action.type === "client_script_created") {
+	} else 	if (action.type === "client_script_created" || action.type === "client_script_updated") {
+		const label = action.type === "client_script_created" ? "Client Script Created" : "Client Script Updated";
 		card.innerHTML = `
 			<div class="action-card-icon">📜</div>
 			<div class="action-card-body">
-				<strong>Client Script Created</strong>
+				<strong>${label}</strong>
 				<div class="action-card-details">
 					<span>${escapeHtml(action.name)}</span>
 					<span>DocType: ${escapeHtml(action.doctype)}</span>
+				</div>
+			</div>`;
+	}
+	if (action.type === "api_updated") {
+		card.innerHTML = `
+			<div class="action-card-icon">🔌</div>
+			<div class="action-card-body">
+				<strong>API Endpoint Updated</strong>
+				<div class="action-card-details">
+					<code>${escapeHtml(action.endpoint_url)}</code>
 				</div>
 			</div>`;
 	}
@@ -258,6 +271,216 @@ function setComposerState(sending) {
 	sendButton.textContent = sending ? "…" : "↑";
 }
 
+function loadDocuments() {
+	try {
+		const stored = JSON.parse(window.localStorage.getItem(docsKey));
+		return Array.isArray(stored) ? stored : [];
+	} catch {
+		return [];
+	}
+}
+
+function persistDocuments() {
+	try {
+		window.localStorage.setItem(docsKey, JSON.stringify(documents));
+	} catch (error) {
+		console.warn("Unable to save documents:", error);
+	}
+}
+
+function getDocIcon(type) {
+	if (/pdf/i.test(type)) return "📄";
+	if (/docx?/i.test(type)) return "📝";
+	if (/xlsx?/i.test(type)) return "📊";
+	if (/csv/i.test(type)) return "📋";
+	if (/pptx?/i.test(type)) return "📽";
+	if (/png|jpg|jpeg|gif|bmp|webp/i.test(type)) return "🖼";
+	return "📁";
+}
+
+function isImageType(type) {
+	return /png|jpg|jpeg|gif|bmp|webp/.test(type);
+}
+
+function renderDocuments() {
+	const list = document.getElementById("doc-list");
+	if (!list) return;
+	list.replaceChildren();
+	if (!documents.length) return;
+	documents.forEach((doc) => {
+		const item = document.createElement("div");
+		item.className = "doc-item";
+		const isImg = isImageType(doc.file_type);
+		item.innerHTML = `
+			<span class="doc-icon">${getDocIcon(doc.file_type)}</span>
+			<span class="doc-name" title="${escapeHtml(doc.file_name)}">${escapeHtml(doc.file_name)}</span>
+			<span class="doc-actions">
+				${isImg
+					? '<button class="doc-action" data-action="analyse">Analyse</button><button class="doc-action" data-action="ocr">Extract text</button>'
+					: '<button class="doc-action" data-action="summarise">Summarise</button><button class="doc-action" data-action="tables">Extract tables</button>'}
+				<button class="doc-remove" data-action="remove">✕</button>
+			</span>`;
+		if (isImg) {
+			item.querySelector("[data-action=analyse]").addEventListener("click", (e) => {
+				e.stopPropagation();
+				askAboutImage(doc, "Analyse this image and describe what you see in detail.");
+			});
+			item.querySelector("[data-action=ocr]").addEventListener("click", (e) => {
+				e.stopPropagation();
+				askAboutImage(doc, "Extract all text from this image. Read every visible word and character.");
+			});
+		} else {
+			item.querySelector("[data-action=summarise]").addEventListener("click", (e) => {
+				e.stopPropagation();
+				askAboutDocument(doc, "Please summarise this document.");
+			});
+			item.querySelector("[data-action=tables]").addEventListener("click", (e) => {
+				e.stopPropagation();
+				askAboutDocument(doc, "Please extract all tables from this document and show them.");
+			});
+		}
+		item.querySelector("[data-action=remove]").addEventListener("click", (e) => {
+			e.stopPropagation();
+			deleteDocument(doc.name);
+		});
+		list.appendChild(item);
+	});
+}
+
+async function uploadDocument(file) {
+	const formData = new FormData();
+	formData.append("file", file);
+	formData.append("doctype", "File");
+	formData.append("docname", "ai_chat_upload");
+	formData.append("is_private", "1");
+
+	try {
+		const resp = await fetch("/api/method/chatbot.document_processor.upload_file", {
+			method: "POST",
+			headers: { "X-Frappe-CSRF-Token": csrf },
+			body: formData,
+		});
+		const data = await resp.json();
+		if (!resp.ok) throw new Error(data?.exc || "Upload failed");
+		const doc = data.message;
+		documents.unshift(doc);
+		persistDocuments();
+		renderDocuments();
+		showToast(`Uploaded ${doc.file_name}`);
+		return doc;
+	} catch (err) {
+		showToast(`Upload failed: ${err.message}`);
+		throw err;
+	}
+}
+
+async function deleteDocument(fileName) {
+	try {
+		const resp = await fetch("/api/method/chatbot.document_processor.delete_document", {
+			method: "POST",
+			headers: { "Content-Type": "application/json", "X-Frappe-CSRF-Token": csrf },
+			body: JSON.stringify({ file_name: fileName }),
+		});
+		const data = await resp.json();
+		if (!resp.ok) throw new Error(data?.exc || "Delete failed");
+		documents = documents.filter((d) => d.name !== fileName);
+		persistDocuments();
+		renderDocuments();
+		showToast("Document removed");
+	} catch (err) {
+		showToast(`Failed to remove: ${err.message}`);
+	}
+}
+
+async function askAboutImage(doc, message) {
+	setComposerState(true);
+	removeWelcome();
+	createMessage(`${message}`, "user");
+	const fileName = doc.file_name;
+	addToConversation("user", `${message} [Image: ${fileName}]`);
+	const pending = createMessage("", "ai", true);
+
+	try {
+		const imgResp = await fetch("/api/method/chatbot.document_processor.get_image_data", {
+			method: "POST",
+			headers: { "Content-Type": "application/json", "X-Frappe-CSRF-Token": csrf },
+			body: JSON.stringify({ file_name: doc.name }),
+		});
+		const imgData = await imgResp.json();
+		if (!imgResp.ok) throw new Error(imgData?.exc || "Could not read image");
+
+		const chatResp = await fetch("/api/method/chatbot.ai_agent.chat", {
+			method: "POST",
+			headers: { "Content-Type": "application/json", "X-Frappe-CSRF-Token": csrf },
+			body: JSON.stringify({
+				message,
+				image_data: imgData.message.data,
+				image_mime_type: imgData.message.mime_type,
+			}),
+		});
+		const chatData = await chatResp.json();
+		if (!chatResp.ok) throw new Error(chatData?.exc || "No response");
+		const reply = chatData?.message?.reply || "I'm sorry, I couldn't analyse the image just now.";
+		const action = chatData?.message?.action || null;
+		pending.bubble.classList.remove("typing");
+		pending.bubble.innerHTML = formatAssistantReply(reply);
+		if (action) pending.contentWrap.appendChild(createActionCard(action));
+		addCopyButton(pending.contentWrap, reply);
+		addToConversation("ai", reply, action);
+	} catch (error) {
+		pending.bubble.classList.remove("typing");
+		pending.bubble.textContent = "Something went wrong while analysing the image. Please try again.";
+		console.error("Image query failed:", error);
+	} finally {
+		setComposerState(false);
+		messageInput.focus();
+		scrollToBottom();
+	}
+}
+
+async function askAboutDocument(doc, message) {
+	setComposerState(true);
+	removeWelcome();
+	const userMsg = createMessage(`${message}`, "user");
+	const fileName = doc.file_name;
+	addToConversation("user", `${message} [File: ${fileName}]`);
+	const pending = createMessage("", "ai", true);
+
+	try {
+		const contentResp = await fetch("/api/method/chatbot.document_processor.get_document_content", {
+			method: "POST",
+			headers: { "Content-Type": "application/json", "X-Frappe-CSRF-Token": csrf },
+			body: JSON.stringify({ file_name: doc.name }),
+		});
+		const contentData = await contentResp.json();
+		if (!contentResp.ok) throw new Error(contentData?.exc || "Could not read document");
+		const documentContent = contentData.message.content;
+
+		const chatResp = await fetch("/api/method/chatbot.ai_agent.chat", {
+			method: "POST",
+			headers: { "Content-Type": "application/json", "X-Frappe-CSRF-Token": csrf },
+			body: JSON.stringify({ message, document_content: documentContent }),
+		});
+		const chatData = await chatResp.json();
+		if (!chatResp.ok) throw new Error(chatData?.exc || "No response");
+		const reply = chatData?.message?.reply || "I'm sorry, I couldn't generate a response just now.";
+		const action = chatData?.message?.action || null;
+		pending.bubble.classList.remove("typing");
+		pending.bubble.innerHTML = formatAssistantReply(reply);
+		if (action) pending.contentWrap.appendChild(createActionCard(action));
+		addCopyButton(pending.contentWrap, reply);
+		addToConversation("ai", reply, action);
+	} catch (error) {
+		pending.bubble.classList.remove("typing");
+		pending.bubble.textContent = "Something went wrong while processing the document. Please try again.";
+		console.error("Document query failed:", error);
+	} finally {
+		setComposerState(false);
+		messageInput.focus();
+		scrollToBottom();
+	}
+}
+
 function renderHistory() {
 	historyList.replaceChildren();
 	conversations.forEach((conversation) => {
@@ -281,7 +504,8 @@ function renderWelcome() {
 			<div class="suggestions">
 				<button class="suggestion" type="button">Import data from Excel</button>
 				<button class="suggestion" type="button">Create an API endpoint</button>
-				<button class="suggestion" type="button">Add validation to Lead form</button>
+				<button class="suggestion" type="button">Add validation to Customer form</button>
+				<button class="suggestion" type="button">Edit the Client Script for Sales Invoice</button>
 			</div>
 		</section>`;
 	bindSuggestions();
@@ -320,6 +544,37 @@ function startNewConversation() {
 	renderHistory();
 	renderConversation();
 	messageInput.focus();
+}
+
+function showToast(msg) {
+	const toast = document.getElementById("share-toast");
+	if (!toast) return;
+	toast.textContent = msg;
+	toast.classList.add("show");
+	clearTimeout(toast._hide);
+	toast._hide = setTimeout(() => toast.classList.remove("show"), 2200);
+}
+
+function shareConversation() {
+	const conversation = activeConversation();
+	if (!conversation?.messages.length) {
+		showToast("No messages to share");
+		return;
+	}
+	const text = conversation.messages
+		.map(({ role, content }) => `${role === "user" ? "You" : "Assistant"}:\n${content}`)
+		.join("\n\n");
+	const title = conversation.title;
+	const shareData = { title, text: `${title}\n\n${text}` };
+	if (navigator.share && window.matchMedia("(max-width: 720px)").matches) {
+		navigator.share(shareData).catch(() => {});
+		return;
+	}
+	navigator.clipboard.writeText(shareData.text).then(() => {
+		showToast("Copied to clipboard — ready to share!");
+	}).catch(() => {
+		showToast("Could not copy to clipboard");
+	});
 }
 
 function exportConversation() {
@@ -427,7 +682,31 @@ messageInput.addEventListener("keydown", (event) => {
 });
 document.getElementById("voice-button").addEventListener("click", startVoice);
 document.getElementById("new-chat").addEventListener("click", startNewConversation);
+document.getElementById("share-chat").addEventListener("click", shareConversation);
 document.getElementById("export-chat").addEventListener("click", exportConversation);
+
+const fileInput = document.getElementById("file-input");
+const uploadBtn = document.getElementById("upload-button");
+const uploadLink = document.getElementById("upload-link");
+
+function openFilePicker() { fileInput.click(); }
+uploadBtn.addEventListener("click", openFilePicker);
+uploadLink.addEventListener("click", openFilePicker);
+
+fileInput.addEventListener("change", async () => {
+	const files = Array.from(fileInput.files);
+	fileInput.value = "";
+	const supported = /\.(pdf|docx?|xlsx?|csv|pptx?|png|jpe?g|gif|bmp|webp)$/i;
+	for (const file of files) {
+		if (!supported.test(file.name)) {
+			showToast(`Skipped unsupported file: ${file.name}`);
+			continue;
+		}
+		await uploadDocument(file);
+	}
+});
+
 renderHistory();
+renderDocuments();
 bindSuggestions();
 })();

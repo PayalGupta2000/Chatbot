@@ -5,9 +5,11 @@ from chatbot.tools import Tool, ToolRegistry
 class CreateAPITool(Tool):
 	name = "create_api"
 	description = (
-		"Create a custom API endpoint in ERPNext using Server Script. "
+		"Create or edit a custom API endpoint in ERPNext using Server Script. "
 		"Use this when the user says 'create an api', 'make an endpoint', "
-		"'expose this as api', or 'create a rest endpoint'."
+		"'expose this as api', 'create a rest endpoint', "
+		"'edit api', or 'update endpoint'. "
+		"If the endpoint already exists it will be updated."
 	)
 	parameters = {
 		"type": "object",
@@ -45,41 +47,51 @@ class CreateAPITool(Tool):
 	}
 
 	def execute(self, method_name, description, script, allow_guest=False, **kwargs):
-		if not frappe.has_permission("Server Script", "create"):
-			return {"reply": "I need permission to create Server Script records."}
-
 		api_method = method_name.strip().lower().replace(" ", "_")
 		if not api_method:
 			return {"reply": "Please provide a valid method name."}
 
-		try:
-			existing = frappe.db.exists("Server Script", {"api_method": api_method})
-			if existing:
-				return {
-					"reply": (
-						f"An API endpoint named **{api_method}** already exists "
-						f"(Server Script: {existing}). Please choose a different name."
-					)
-				}
+		existing_name = frappe.db.get_value(
+			"Server Script", {"api_method": api_method}, "name"
+		)
 
-			doc = frappe.get_doc(
-				{
-					"doctype": "Server Script",
-					"name": api_method,
-					"title": description,
-					"script_type": "API",
-					"api_method": api_method,
-					"script": script,
-					"allow_guest": 1 if allow_guest else 0,
-					"enabled": 1,
-				}
-			)
-			doc.insert()
-			frappe.db.commit()
+		if existing_name:
+			if not frappe.has_permission("Server Script", "write"):
+				return {"reply": "I need write permission to edit Server Script records."}
+		else:
+			if not frappe.has_permission("Server Script", "create"):
+				return {"reply": "I need permission to create Server Script records."}
+
+		try:
+			if existing_name:
+				doc = frappe.get_doc("Server Script", existing_name)
+				doc.script = script
+				doc.title = description
+				doc.allow_guest = 1 if allow_guest else 0
+				doc.enabled = 1
+				doc.save()
+				frappe.db.commit()
+				verb = "updated"
+			else:
+				doc = frappe.get_doc(
+					{
+						"doctype": "Server Script",
+						"name": api_method,
+						"title": description,
+						"script_type": "API",
+						"api_method": api_method,
+						"script": script,
+						"allow_guest": 1 if allow_guest else 0,
+						"enabled": 1,
+					}
+				)
+				doc.insert()
+				frappe.db.commit()
+				verb = "created and enabled"
 
 			endpoint_url = f"/api/method/{api_method}"
 			reply = (
-				f"API endpoint **{api_method}** has been created and enabled.\n\n"
+				f"API endpoint **{api_method}** has been {verb}.\n\n"
 				f"- **URL:** `{endpoint_url}`\n"
 				f"- **Method:** `POST` (or `GET` if no side effects)\n"
 				f"- **Guest access:** {'Yes' if allow_guest else 'No'}\n\n"
@@ -89,7 +101,7 @@ class CreateAPITool(Tool):
 			return {
 				"reply": reply,
 				"action": {
-					"type": "api_created",
+					"type": "api_updated" if existing_name else "api_created",
 					"method_name": api_method,
 					"endpoint_url": endpoint_url,
 					"allow_guest": allow_guest,
@@ -97,8 +109,8 @@ class CreateAPITool(Tool):
 			}
 
 		except Exception as e:
-			frappe.log_error(frappe.get_traceback(), "AI Create API Error")
-			return {"reply": f"Failed to create the API endpoint: {str(e)}"}
+			frappe.log_error(frappe.get_traceback(), "AI API Error")
+			return {"reply": f"Failed to process API endpoint: {str(e)}"}
 
 
 ToolRegistry.register(CreateAPITool())

@@ -14,7 +14,7 @@
         button, textarea { font: inherit; }
         button { cursor: pointer; }
         .app { display: flex; min-height: 100vh; }
-        .sidebar { display: flex; flex: 0 0 274px; flex-direction: column; padding: 22px 16px; color: #eaf4f1; background: var(--navy); }
+        .sidebar { display: flex; flex: 0 0 274px; flex-direction: column; padding: 22px 16px; color: #eaf4f1; background: var(--navy); position: sticky; top: 0; height: 100vh; }
         .brand { display: flex; align-items: center; gap: 10px; padding: 3px 8px 23px; font-weight: 700; letter-spacing: -.02em; }
         .brand-mark { display: grid; width: 30px; height: 30px; place-items: center; border-radius: 9px; color: var(--navy); background: #c6e5d6; font-family: "Playfair Display", serif; font-size: 18px; }
         .new-chat { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; padding: 11px; border: 1px solid rgba(225,241,235,.22); border-radius: 9px; color: #f7fcfa; background: rgba(255,255,255,.08); transition: background .2s; }
@@ -23,13 +23,29 @@
         #history { overflow-y: auto; }
         .history-item { display: block; overflow: hidden; width: 100%; padding: 10px 11px; border: 0; border-radius: 8px; color: #d5e2de; background: transparent; font-size: 14px; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
         .history-item:hover, .history-item.active { background: rgba(255,255,255,.12); }
+        .docs-label { margin: 20px 8px 8px; color: #a9c0bb; font-size: 11px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; display: flex; justify-content: space-between; align-items: center; }
+        .docs-label .upload-link { color: #8fc6b8; font-size: 11px; text-transform: none; letter-spacing: 0; cursor: pointer; }
+        .docs-label .upload-link:hover { color: #b5dfd2; }
+        #doc-list { overflow-y: auto; max-height: 180px; }
+        .doc-item { display: flex; align-items: center; gap: 8px; padding: 8px 11px; border-radius: 8px; color: #d5e2de; font-size: 13px; cursor: pointer; }
+        .doc-item:hover { background: rgba(255,255,255,.1); }
+        .doc-icon { flex: 0 0 20px; font-size: 16px; text-align: center; }
+        .doc-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .doc-actions { display: none; gap: 4px; }
+        .doc-item:hover .doc-actions { display: flex; }
+        .doc-action { padding: 2px 6px; border: 0; border-radius: 4px; color: #bce0d6; background: rgba(255,255,255,.1); font-size: 10px; white-space: nowrap; }
+        .doc-action:hover { background: rgba(255,255,255,.2); }
+        .doc-remove { padding: 2px 5px; border: 0; border-radius: 4px; color: #d5a9a9; background: transparent; font-size: 14px; line-height: 1; }
+        .doc-remove:hover { background: rgba(255,100,100,.15); }
         .sidebar-foot { margin-top: auto; padding: 18px 8px 2px; border-top: 1px solid rgba(225,241,235,.16); color: #a9c0bb; font-size: 12px; }
         .workspace { display: flex; flex: 1; flex-direction: column; min-width: 0; }
         .topbar { display: flex; align-items: center; justify-content: space-between; height: 70px; padding: 0 clamp(22px, 5vw, 72px); border-bottom: 1px solid var(--line); background: rgba(255,253,249,.82); }
         .topbar h1 { margin: 0; font-size: 15px; font-weight: 600; }
         .topbar-actions { display: flex; align-items: center; gap: 16px; }
-        .export-chat { padding: 6px 9px; border: 1px solid #d7e4df; border-radius: 7px; color: #37635e; background: #fffdf9; font-size: 12px; font-weight: 600; }
-        .export-chat:hover { border-color: var(--teal); color: var(--teal); }
+        .topbar-btn { padding: 6px 9px; border: 1px solid #d7e4df; border-radius: 7px; color: #37635e; background: #fffdf9; font-size: 12px; font-weight: 600; }
+        .topbar-btn:hover { border-color: var(--teal); color: var(--teal); }
+        .share-toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); padding: 10px 20px; border-radius: 9px; color: #fff; background: var(--navy); font-size: 14px; z-index: 999; opacity: 0; transition: opacity .3s; pointer-events: none; }
+        .share-toast.show { opacity: 1; }
         .status { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 13px; }
         .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #4bb090; box-shadow: 0 0 0 3px #dff3ea; }
         .chat-shell { display: flex; flex: 1; flex-direction: column; width: min(100%, 920px); margin: 0 auto; padding: clamp(24px, 4vw, 48px) clamp(16px, 4vw, 38px) 22px; }
@@ -97,10 +113,12 @@
             <button class="new-chat" id="new-chat" type="button"><span>＋</span> New conversation</button>
             <p class="history-label">Recent conversations</p>
             <div id="history" aria-label="Conversation history"></div>
+            <p class="docs-label">Documents <span class="upload-link" id="upload-link">+ Upload</span></p>
+            <div id="doc-list" aria-label="Uploaded documents"></div>
             <div class="sidebar-foot">Your conversations stay in this session.</div>
         </aside>
         <section class="workspace">
-            <header class="topbar"><h1>AI Assistant</h1><div class="topbar-actions"><button class="export-chat" id="export-chat" type="button">Export chat</button><div class="status"><span class="status-dot"></span> Ready to help</div></div></header>
+            <header class="topbar"><h1>AI Assistant</h1><div class="topbar-actions"><button class="topbar-btn" id="share-chat" type="button">Share chat</button><button class="topbar-btn" id="export-chat" type="button">Export chat</button><div class="status"><span class="status-dot"></span> Ready to help</div></div></header>
             <div class="chat-shell">
                 <div id="chat-box" aria-live="polite">
                     <section class="welcome" id="welcome">
@@ -116,6 +134,7 @@
                 </div>
                 <form class="composer" id="chat-form">
                     <textarea id="msg" rows="1" placeholder="Message the assistant…" aria-label="Message the assistant"></textarea>
+                    <button class="icon-button" id="upload-button" type="button" aria-label="Upload a document" title="Upload a document">📎</button>
                     <button class="icon-button" id="voice-button" type="button" aria-label="Use voice input" title="Use voice input">⌁</button>
                     <button class="send-button" id="send-button" type="submit" aria-label="Send message" title="Send message">↑</button>
                 </form>
@@ -123,6 +142,8 @@
             </div>
         </section>
     </main>
+    <div class="share-toast" id="share-toast"></div>
+    <input type="file" id="file-input" accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.ppt,.pptx,.png,.jpg,.jpeg,.gif,.bmp,.webp" multiple style="display:none">
     <script src="/assets/chatbot/js/ai_chat.js"></script>
 </body>
 </html>

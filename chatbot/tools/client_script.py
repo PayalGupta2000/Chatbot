@@ -22,9 +22,10 @@ def extract_javascript(response):
 class ClientScriptTool(Tool):
 	name = "create_client_script"
 	description = (
-		"Create or modify a Client Script for any DocType in ERPNext. "
+		"Create or edit a Client Script for any DocType in ERPNext. "
 		"Use this when the user asks to add form behavior, validation, "
 		"field automation, or custom UI logic on any form. "
+		"If a Client Script already exists for this DocType, it will be updated. "
 		"The user must specify which DocType."
 	)
 	parameters = {
@@ -51,37 +52,57 @@ class ClientScriptTool(Tool):
 	}
 
 	def execute(self, doctype, request, **kwargs):
-		if not frappe.has_permission("Client Script", "create"):
-			return {"reply": "I need permission to create Client Script records."}
+		can_create = frappe.has_permission("Client Script", "create")
+		can_write = frappe.has_permission("Client Script", "write")
+
+		if not can_create and not can_write:
+			return {"reply": "I need permission to create or edit Client Script records."}
 
 		if not frappe.db.exists("DocType", doctype):
 			return {"reply": f"DocType **{doctype}** does not exist in the system."}
 
 		try:
 			script = self._generate_script(doctype, request)
-			name = f"AI Script {doctype} {frappe.generate_hash(length=6)}"
-			doc = frappe.get_doc(
-				{
-					"doctype": "Client Script",
-					"name": name,
-					"dt": doctype,
-					"view": "Form",
-					"enabled": 1,
-					"script": script,
-				}
+			existing_name = frappe.db.get_value(
+				"Client Script",
+				{"dt": doctype, "view": "Form", "enabled": 1},
+				"name",
 			)
-			doc.insert()
-			frappe.db.commit()
+
+			if existing_name and can_write:
+				doc = frappe.get_doc("Client Script", existing_name)
+				doc.script = script
+				doc.save()
+				frappe.db.commit()
+				verb = "Updated"
+				name = existing_name
+			else:
+				if not can_create:
+					return {"reply": "I need create permission to make a new Client Script."}
+				name = f"AI Script {doctype} {frappe.generate_hash(length=6)}"
+				doc = frappe.get_doc(
+					{
+						"doctype": "Client Script",
+						"name": name,
+						"dt": doctype,
+						"view": "Form",
+						"enabled": 1,
+						"script": script,
+					}
+				)
+				doc.insert()
+				frappe.db.commit()
+				verb = "Created and enabled"
 
 			reply = (
-				f"Created and enabled the Client Script **{name}** for the **{doctype}** form.\n\n"
+				f"{verb} the Client Script **{name}** for the **{doctype}** form.\n\n"
 				f"Refresh the {doctype} form to see it in action."
 			)
 
 			return {
 				"reply": reply,
 				"action": {
-					"type": "client_script_created",
+					"type": "client_script_updated" if existing_name else "client_script_created",
 					"name": name,
 					"doctype": doctype,
 				},
@@ -89,7 +110,7 @@ class ClientScriptTool(Tool):
 
 		except Exception as e:
 			frappe.log_error(frappe.get_traceback(), f"AI Client Script Error ({doctype})")
-			return {"reply": f"Failed to create the Client Script for **{doctype}**: {str(e)}"}
+			return {"reply": f"Failed to process Client Script for **{doctype}**: {str(e)}"}
 
 	def _generate_script(self, doctype, request):
 		prompt = f"""

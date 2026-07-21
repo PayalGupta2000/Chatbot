@@ -1,5 +1,6 @@
 import frappe
 import google.generativeai as genai
+import base64
 
 from chatbot.tools import ToolRegistry, extract_function_call
 
@@ -14,14 +15,28 @@ SYSTEM_PROMPT = """You are an AI assistant inside the ERPNext system.
 You can answer questions about ERPNext, help users with tasks, and perform
 actions by calling tools when the user asks you to do something.
 
+You can also work with uploaded documents (PDF, DOCX, Excel, CSV, PPT,
+images). When the user asks questions about a document they've uploaded,
+use the document content provided in the prompt to answer.
+You can summarise documents, extract tables, find specific information,
+or answer questions based on the document content.
+
+When you receive an image you can:
+- Extract and read text in any language (OCR)
+- Analyse charts, graphs, and data visualisations
+- Read and extract data from invoices, receipts, and forms
+- Describe and interpret screenshots
+- Answer questions about the image contents
+
 ## When to Use Tools
 - **Import data**: If the user says "import this excel", "import data",
   "import this file", or provides a file to import — use the `import_data` tool.
 - **Create an API**: If the user says "create an api", "make an endpoint",
   "expose this as an api" — use the `create_api` tool.
-- **Client Script**: If the user asks to add form behavior, validation,
-  field automation, or custom UI logic on any DocType form — use the
-  `create_client_script` tool. The user must specify which DocType.
+- **Client Script**: If the user asks to add, edit, or update form behavior,
+  validation, field automation, or custom UI logic on any DocType form — use
+  the `create_client_script` tool. If a script for that DocType already exists,
+  this tool will update it. The user must specify which DocType.
 
 ## Guidelines
 - Always ask for missing required information before calling a tool.
@@ -62,30 +77,66 @@ def get_memory(user):
 	)
 
 
-@frappe.whitelist(allow_guest=True)
-def chat(message):
-	user = frappe.session.user or "Guest"
-	message = (message or "").strip()
-	if not message:
-		frappe.throw("Please enter a message.")
-
-	memory = get_memory(user)
-
+def _build_prompt(message, document_content, memory):
 	prompt = SYSTEM_PROMPT
+
+	if document_content:
+		doc_preview = document_content[:8000]
+		prompt += f"\n## Uploaded Document Content\nThe user has uploaded a document with the following content:\n{doc_preview}\n\n"
 
 	for row in reversed(memory):
 		prompt += f"\nUser: {row.message}"
 		prompt += f"\nAssistant: {row.conversation}"
 
 	prompt += f"\nUser: {message}\nAssistant:"
+	return prompt
 
+
+def _build_multimodal_content(message, image_data, image_mime_type, document_content, memory):
+	parts = []
+	parts.append(SYSTEM_PROMPT)
+
+	if document_content:
+		doc_preview = document_content[:8000]
+		parts.append(f"\n## Uploaded Document Content\nThe user has uploaded a document with the following content:\n{doc_preview}\n\n")
+
+	for row in reversed(memory):
+		parts.append(f"\nUser: {row.message}")
+		parts.append(f"\nAssistant: {row.conversation}")
+
+	parts.append(f"\nUser: {message}")
+
+	if image_data and image_mime_type:
+		from google.generativeai import protos
+		image_bytes = base64.b64decode(image_data)
+		parts.append(protos.Part(inline_data=protos.Blob(mime_type=image_mime_type, data=image_bytes)))
+
+	parts.append("\nAssistant:")
+	return parts
+
+
+@frappe.whitelist(allow_guest=True)
+def chat(message, document_content=None, image_data=None, image_mime_type=None):
+	user = frappe.session.user or "Guest"
+	message = (message or "").strip()
+	if not message:
+		frappe.throw("Please enter a message.")
+
+	memory = get_memory(user)
 	tools = ToolRegistry.get_function_declarations()
 
+	has_image = bool(image_data and image_mime_type)
+
 	try:
-		if tools:
-			response = model.generate_content(prompt, tools=tools)
+		if has_image:
+			contents = _build_multimodal_content(message, image_data, image_mime_type, document_content, memory)
+			response = model.generate_content(contents, tools=tools or None)
 		else:
-			response = model.generate_content(prompt)
+			prompt = _build_prompt(message, document_content, memory)
+			if tools:
+				response = model.generate_content(prompt, tools=tools)
+			else:
+				response = model.generate_content(prompt)
 	except Exception as e:
 		frappe.log_error(frappe.get_traceback(), "AI Chat Generation Error")
 		return {"reply": "I encountered an error processing your request. Please try again."}
