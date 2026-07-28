@@ -155,23 +155,14 @@ patches = [
 # Scheduled Tasks
 # ---------------
 
-# scheduler_events = {
-# 	"all": [
-# 		"chatbot.tasks.all"
-# 	],
-# 	"daily": [
-# 		"chatbot.tasks.daily"
-# 	],
-# 	"hourly": [
-# 		"chatbot.tasks.hourly"
-# 	],
-# 	"weekly": [
-# 		"chatbot.tasks.weekly"
-# 	],
-# 	"monthly": [
-# 		"chatbot.tasks.monthly"
-# 	],
-# }
+scheduler_events = {
+	"hourly": [
+		"chatbot.proactive_engine.scheduled_insight_check"
+	],
+	"daily": [
+		"chatbot.proactive_engine.scheduled_insight_check"
+	],
+}
 
 # Testing
 # -------
@@ -248,6 +239,24 @@ patches = [
 # default_log_clearing_doctypes = {
 # 	"Logging DocType Name": 30  # days to retain logs
 # }
+
+# Chatbot Plugin Hooks
+# --------------------
+# Other apps can register chatbot tools and plugins via these hooks.
+#
+# chatbot_tools — list of Tool subclasses to register with the chatbot
+# 	Example: ["myapp.my_module.MyTool"]
+# 	Your class must extend chatbot.tools.Tool and set name/description/parameters.
+#
+# chatbot_plugins — list of ChatbotPlugin subclasses for lifecycle hooks
+# 	Example: ["myapp.my_module.MyPlugin"]
+# 	Your class must extend chatbot.plugins.ChatbotPlugin and set name.
+# 	Available lifecycle hooks:
+# 	  - on_register()
+# 	  - on_chat_before(message, document_content, image_data, image_mime_type, target_language, memory)
+# 	  - on_chat_after(message, response, tool_used)
+# 	  - on_tool_before(tool_name, **kwargs)
+# 	  - on_tool_after(tool_name, result, **kwargs)
 
 # Translation
 # ------------

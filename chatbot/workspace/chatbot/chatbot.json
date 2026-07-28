@@ -1,0 +1,68 @@
+{
+ "charts": [],
+ "content": "[{\"id\":\"A6L28nLb7j\",\"type\":\"header\",\"data\":{\"text\":\"<span style=\\\"font-size: 18px; letter-spacing: 0.18px;\\\"><b>Chatbot</b></span>\",\"col\":12}},{\"id\":\"Xm8kLq3PnR\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Chat\",\"col\":4}},{\"id\":\"Bv5yTz9WkQ\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Plugins\",\"col\":4}},{\"id\":\"Hj2nFd7MsL\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Chat Memory\",\"col\":4}}]",
+ "creation": "2025-01-01 00:00:00",
+ "custom_blocks": [],
+ "docstatus": 0,
+ "doctype": "Workspace",
+ "for_user": "",
+ "hide_custom": 0,
+ "icon": "message-square",
+ "idx": 1,
+ "is_hidden": 0,
+ "label": "Chatbot",
+ "links": [
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Plugins",
+   "link_count": 1,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Chatbot Plugin",
+   "link_count": 0,
+   "link_to": "Chatbot Plugin",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  }
+ ],
+ "modified": "2025-01-01 00:00:00",
+ "modified_by": "Administrator",
+ "module": "Chatbot",
+ "name": "Chatbot",
+ "number_cards": [],
+ "owner": "Administrator",
+ "parent_page": "",
+ "public": 1,
+ "quick_lists": [],
+ "restrict_to_domain": "",
+ "roles": [],
+ "sequence_id": 1.0,
+ "shortcuts": [
+  {
+   "doc_view": "",
+   "label": "Chat",
+   "link_to": "ai_chat",
+   "type": "Page"
+  },
+  {
+   "doc_view": "List",
+   "label": "Plugins",
+   "link_to": "Chatbot Plugin",
+   "type": "DocType"
+  },
+  {
+   "doc_view": "List",
+   "label": "Chat Memory",
+   "link_to": "AI Chat Memory",
+   "type": "DocType"
+  }
+ ],
+ "title": "Chatbot"
+}

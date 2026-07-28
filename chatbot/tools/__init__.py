@@ -20,10 +20,12 @@ class ToolRegistry:
 
 	@classmethod
 	def get_all(cls) -> list[Tool]:
+		ensure_hooks_discovered()
 		return list(cls._tools)
 
 	@classmethod
 	def get_by_name(cls, name: str) -> Tool | None:
+		ensure_hooks_discovered()
 		for tool in cls._tools:
 			if tool.name == name:
 				return tool
@@ -101,7 +103,27 @@ def extract_function_call(response):
 	return None
 
 
-# Auto-discover and register all tools
-import chatbot.tools.import_data  # noqa: F401, E402
-import chatbot.tools.create_api  # noqa: F401, E402
-import chatbot.tools.client_script  # noqa: F401, E402
+import chatbot.tools.import_data
+import chatbot.tools.create_api
+import chatbot.tools.client_script
+import chatbot.tools.generate_image
+import chatbot.tools.report_builder
+import chatbot.tools.workflow_creator
+import chatbot.tools.email_agent
+import chatbot.tools.data_query
+import chatbot.tools.doc_automation
+
+
+def discover_from_hooks():
+	from chatbot.plugins import discover_plugin_tools
+	discover_plugin_tools()
+
+
+_hooks_discovered = False
+
+
+def ensure_hooks_discovered():
+	global _hooks_discovered
+	if not _hooks_discovered:
+		_hooks_discovered = True
+		discover_from_hooks()

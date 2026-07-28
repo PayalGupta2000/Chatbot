@@ -51,8 +51,46 @@
         .doc-remove:hover { background: rgba(255,100,100,.15); }
         .doc-empty { padding: 10px 11px; color: #78928b; font-size: 12px; text-align: center; }
         .sidebar-foot { padding: 14px 8px 16px; border-top: 1px solid rgba(225,241,235,.12); color: #78928b; font-size: 11px; text-align: center; }
+.sidebar-nav { margin: 8px 0; display: flex; flex-direction: column; gap: 2px; }
+.nav-btn { display: flex; align-items: center; gap: 8px; width: 100%; padding: 10px 11px; border: 0; border-radius: 8px; color: #d5e2de; background: transparent; font-size: 13px; cursor: pointer; }
+.nav-btn:hover, .nav-btn.active { background: rgba(255,255,255,.1); }
+.nav-btn .nav-icon { font-size: 15px; flex-shrink: 0; }
+.plugins-view { display: none; flex: 1; flex-direction: column; padding: clamp(24px, 4vw, 48px) clamp(16px, 4vw, 38px); overflow-y: auto; }
+.plugins-view.active { display: flex; }
+.chat-shell.hidden { display: none; }
+.plugins-header { margin-bottom: 28px; }
+.plugins-header h2 { margin: 0 0 6px; font-size: 20px; font-weight: 600; color: var(--ink); }
+.plugins-header p { margin: 0; color: var(--muted); font-size: 14px; }
+.plugin-card { display: flex; align-items: center; gap: 14px; padding: 16px 18px; margin-bottom: 10px; border: 1px solid var(--line); border-radius: 12px; background: var(--paper); transition: box-shadow .2s; }
+.plugin-card:hover { box-shadow: var(--shadow); }
+.plugin-icon { display: grid; width: 40px; height: 40px; place-items: center; border-radius: 10px; font-size: 20px; flex-shrink: 0; }
+.plugin-icon.on { color: #1c7168; background: #e1f1eb; }
+.plugin-icon.off { color: #667085; background: #f0efec; }
+.plugin-info { flex: 1; min-width: 0; }
+.plugin-info .plugin-name { font-weight: 600; font-size: 14px; color: var(--ink); }
+.plugin-info .plugin-desc { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.plugin-info .plugin-meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.plugin-meta .hook-badge { padding: 1px 7px; border-radius: 999px; background: #eef5f2; color: #37635e; font-size: 10px; font-weight: 500; }
+.plugin-meta .version-badge { padding: 1px 7px; border-radius: 999px; background: #f0efec; color: #667085; font-size: 10px; font-weight: 500; }
+.plugin-toggle { flex-shrink: 0; }
+.toggle-switch { position: relative; display: inline-block; width: 38px; height: 22px; cursor: pointer; }
+.toggle-switch input { opacity: 0; width: 0; height: 0; }
+.toggle-slider { position: absolute; inset: 0; border-radius: 22px; background: #d0d5dd; transition: background .2s; }
+.toggle-slider::before { content: ""; position: absolute; left: 3px; bottom: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: transform .2s; }
+.toggle-switch input:checked + .toggle-slider { background: #1c7168; }
+.toggle-switch input:checked + .toggle-slider::before { transform: translateX(16px); }
+.plugins-empty { text-align: center; padding: 40px 20px; color: var(--muted); font-size: 14px; }
+.plugins-error { text-align: center; padding: 40px 20px; color: #d9534f; font-size: 14px; }
+.plugins-loading { text-align: center; padding: 40px 20px; color: var(--muted); font-size: 14px; }
+.spinner { display: inline-block; width: 20px; height: 20px; border: 2px solid var(--line); border-top-color: var(--teal); border-radius: 50%; animation: spin .6s linear infinite; margin-right: 8px; vertical-align: middle; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.plugins-toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); padding: 10px 22px; border-radius: 10px; color: #fff; background: var(--navy); font-size: 14px; z-index: 999; opacity: 0; transition: opacity .3s; pointer-events: none; box-shadow: var(--shadow); }
+.plugins-toast.show { opacity: 1; }
         .workspace { display: flex; flex: 1; flex-direction: column; min-width: 0; }
         .topbar { display: flex; align-items: center; justify-content: space-between; height: 70px; padding: 0 clamp(22px, 5vw, 72px); border-bottom: 1px solid var(--line); background: rgba(255,253,249,.82); flex-shrink: 0; }
+        .topbar-left { display: flex; align-items: center; gap: 10px; }
+        .toggle-sidebar { display: none; padding: 6px 8px; border: 1px solid #d7e4df; border-radius: 7px; color: #37635e; background: #fffdf9; font-size: 16px; line-height: 1; cursor: pointer; }
+        .toggle-sidebar:hover { border-color: var(--teal); color: var(--teal); }
         .topbar h1 { margin: 0; font-size: 15px; font-weight: 600; }
         .topbar-actions { display: flex; align-items: center; gap: 12px; }
         .topbar-btn { padding: 6px 9px; border: 1px solid #d7e4df; border-radius: 7px; color: #37635e; background: #fffdf9; font-size: 12px; font-weight: 600; white-space: nowrap; }
@@ -92,14 +130,28 @@
         .message-row.ai .msg ul, .message-row.ai .msg ol { margin: 7px 0 11px; padding-left: 21px; }
         .message-row.ai .msg li + li { margin-top: 4px; }
         .message-row.ai .msg code { padding: 2px 5px; border-radius: 4px; color: #17594f; background: #e6f2ee; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .9em; }
-        .message-row.ai .msg pre { overflow-x: auto; margin: 10px 0; padding: 12px; border-radius: 8px; color: #edf6f3; background: #183a36; }
-        .message-row.ai .msg pre code { padding: 0; color: inherit; background: transparent; }
+        .code-block-wrapper { position: relative; margin: 10px 0; }
+        .code-block-wrapper pre { margin: 0; padding: 12px; border-radius: 8px; border: 1px solid var(--line); overflow-x: auto; }
+        .code-block-wrapper pre code { padding: 0; }
+        .code-actions { position: absolute; top: 6px; right: 6px; display: flex; gap: 4px; opacity: 0; transition: opacity .2s; }
+        .code-block-wrapper:hover .code-actions { opacity: 1; }
+        .code-copy-btn, .code-dl-btn { display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 1px solid var(--line); border-radius: 5px; color: var(--muted); background: var(--paper); cursor: pointer; }
+        .code-copy-btn:hover, .code-dl-btn:hover { color: var(--teal); border-color: var(--teal); }
         .message-row.ai .msg blockquote { margin: 10px 0; padding-left: 11px; border-left: 3px solid #8fc6b8; color: #586d6a; }
         .action-card { display: flex; gap: 10px; margin: 10px 0 4px; padding: 10px 13px; border: 1px solid #d1e2db; border-radius: 9px; background: #f4faf7; align-items: center; }
         .action-card-icon { font-size: 20px; flex-shrink: 0; }
         .action-card-body strong { display: block; margin-bottom: 4px; color: #17594f; font-size: 14px; }
         .action-card-details { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; color: #3e625b; }
         .action-card-details code { padding: 2px 6px; border-radius: 4px; background: #dff3ea; font-size: 12px; }
+        .image-card { flex-direction: column; align-items: stretch; padding: 0; overflow: hidden; background: #fff; }
+        .image-card-preview { position: relative; display: flex; align-items: center; justify-content: center; min-height: 160px; background: #f5f3ee; border-radius: 9px 9px 0 0; }
+        .image-card-preview img { display: block; width: 100%; height: auto; max-height: 400px; object-fit: contain; border-radius: 9px 9px 0 0; }
+        .image-card-fallback { display: none; position: absolute; inset: 0; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: var(--muted); font-size: 13px; background: #f5f3ee; border-radius: 9px 9px 0 0; }
+        .image-card-fallback.show { display: flex; }
+        .image-card-fallback a { color: var(--teal); text-decoration: underline; }
+        .image-card .action-card-body { padding: 8px 14px 12px; text-align: center; }
+        .image-card .action-card-body .btn { display: inline-block; padding: 5px 14px; border: 1px solid var(--teal); border-radius: 6px; color: var(--teal); font-size: 12px; font-weight: 600; text-decoration: none; transition: all .2s; }
+        .image-card .action-card-body .btn:hover { color: #fff; background: var(--teal); }
         .badge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
         .badge.success { color: #1c6f4b; background: #d5f0e0; }
         .badge.error { color: #b53b3b; background: #fce5e5; }
@@ -140,11 +192,15 @@
                     <div id="doc-list" aria-label="Uploaded documents"></div>
                 </div>
             </div>
+            <nav class="sidebar-nav" aria-label="Workspace navigation">
+                <button class="nav-btn active" id="nav-chat" type="button"><span class="nav-icon">💬</span> Chat</button>
+                <button class="nav-btn" id="nav-plugins" type="button"><span class="nav-icon">🧩</span> Plugins</button>
+            </nav>
             <div class="sidebar-foot">Your conversations stay in this session.</div>
         </aside>
         <section class="workspace">
-            <header class="topbar"><h1>AI Assistant</h1><div class="topbar-actions"><select class="lang-select" id="lang-select" aria-label="Select response language"><option value="">Auto</option><option value="English">English</option><option value="Spanish">Spanish</option><option value="French">French</option><option value="German">German</option><option value="Italian">Italian</option><option value="Portuguese">Portuguese</option><option value="Russian">Russian</option><option value="Japanese">Japanese</option><option value="Korean">Korean</option><option value="Chinese">Chinese</option><option value="Arabic">Arabic</option><option value="Hindi">Hindi</option></select><button class="topbar-btn" id="share-chat" type="button">Share</button><button class="topbar-btn" id="export-chat" type="button">Export</button><div class="status"><span class="status-dot" id="status-dot"></span><span id="status-text">Ready</span></div></div></header>
-            <div class="chat-shell">
+            <header class="topbar"><h1 id="topbar-title">AI Assistant</h1><div class="topbar-actions"><select class="lang-select" id="lang-select" aria-label="Select response language"><option value="">Auto</option><option value="English">English</option><option value="Spanish">Spanish</option><option value="French">French</option><option value="German">German</option><option value="Italian">Italian</option><option value="Portuguese">Portuguese</option><option value="Russian">Russian</option><option value="Japanese">Japanese</option><option value="Korean">Korean</option><option value="Chinese">Chinese</option><option value="Arabic">Arabic</option><option value="Hindi">Hindi</option></select><button class="topbar-btn" id="share-chat" type="button">Share</button><button class="topbar-btn" id="export-chat" type="button">Export</button><button class="topbar-btn" id="refresh-plugins" type="button" style="display:none">⟳ Refresh</button><div class="status"><span class="status-dot" id="status-dot"></span><span id="status-text">Ready</span></div></div></header>
+            <div class="chat-shell" id="chat-shell">
                 <div id="chat-box" aria-live="polite"></div>
                 <form class="composer" id="chat-form">
                     <textarea id="msg" rows="1" placeholder="Message the assistant…" aria-label="Message the assistant"></textarea>
@@ -153,6 +209,13 @@
                     <button class="send-button" id="send-button" type="submit" aria-label="Send message" title="Send message">↑</button>
                 </form>
                 <p class="composer-note">AI can make mistakes. Verify important information.</p>
+            </div>
+            <div class="plugins-view" id="plugins-view">
+                <div class="plugins-header">
+                    <h2>Plugins Workspace</h2>
+                    <p>Manage your chatbot plugins — enable, disable, and monitor active extensions.</p>
+                </div>
+                <div id="plugins-list"></div>
             </div>
         </section>
     </main>
