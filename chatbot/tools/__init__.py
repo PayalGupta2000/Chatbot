@@ -68,19 +68,32 @@ _TYPE_MAP = {
 }
 
 
+def _build_schema(value: dict) -> protos.Schema:
+	field_type = _TYPE_MAP.get(value.get("type", "string"), protos.Type.STRING)
+	schema_kwargs = {
+		"type": field_type,
+		"description": value.get("description", ""),
+	}
+	if "enum" in value:
+		schema_kwargs["enum"] = value["enum"]
+	if "items" in value:
+		schema_kwargs["items"] = _build_schema(value["items"])
+	if "properties" in value:
+		properties = {}
+		for prop_key, prop_value in value["properties"].items():
+			properties[prop_key] = _build_schema(prop_value)
+		schema_kwargs["properties"] = properties
+	if "required" in value:
+		schema_kwargs["required"] = value["required"]
+	return protos.Schema(**schema_kwargs)
+
+
 def _build_function_declaration(tool: Tool) -> protos.FunctionDeclaration:
 	params = tool.parameters or {}
 	properties = {}
 
 	for key, value in params.get("properties", {}).items():
-		field_type = _TYPE_MAP.get(value.get("type", "string"), protos.Type.STRING)
-		schema_kwargs = {
-			"type": field_type,
-			"description": value.get("description", ""),
-		}
-		if "enum" in value:
-			schema_kwargs["enum"] = value["enum"]
-		properties[key] = protos.Schema(**schema_kwargs)
+		properties[key] = _build_schema(value)
 
 	schema = protos.Schema(
 		type=protos.Type.OBJECT,
@@ -112,6 +125,10 @@ import chatbot.tools.workflow_creator
 import chatbot.tools.email_agent
 import chatbot.tools.data_query
 import chatbot.tools.doc_automation
+import chatbot.tools.todo_tool
+import chatbot.tools.currency_converter
+import chatbot.tools.calculator
+import chatbot.tools.holiday_events
 
 
 def discover_from_hooks():

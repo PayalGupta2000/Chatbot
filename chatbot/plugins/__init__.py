@@ -116,3 +116,4 @@ import chatbot.plugins.dropbox  # noqa: F401, E402
 import chatbot.plugins.figma  # noqa: F401, E402
 import chatbot.plugins.canva  # noqa: F401, E402
 import chatbot.plugins.product_design  # noqa: F401, E402
+import chatbot.plugins.speech  # noqa: F401, E402

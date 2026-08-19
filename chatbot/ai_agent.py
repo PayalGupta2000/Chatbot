@@ -1,13 +1,10 @@
 import frappe
 import google.generativeai as genai
 import base64
-import json
 
 from chatbot.tools import ToolRegistry, extract_function_call
 from chatbot.plugins import PluginRegistry, discover_plugins
-from chatbot.agents.supervisor import route_message
-from chatbot.agents.code_agent import code_agent
-from chatbot.agents.admin_agent import admin_agent
+from chatbot.agents.master_agent import master_agent
 from chatbot.proactive_engine import get_proactive_insights
 
 genai.configure(api_key=frappe.conf.get("gemini_api_key"))
@@ -171,47 +168,36 @@ def _build_multimodal_content(message, image_data, image_mime_type, document_con
 	return parts
 
 
-def _try_agent_execution(message, document_content, image_data, image_mime_type, memory, target_language):
-	agent_name, reason = route_message(message)
-
-	if agent_name == "default":
-		return None
-
-	context = {
-		"document_content": document_content,
-		"memory": memory,
-		"target_language": target_language,
-	}
-
-	agent_map = {
-		"data_agent": code_agent,
-		"code_agent": code_agent,
-		"admin_agent": admin_agent,
-	}
-
-	agent = agent_map.get(agent_name)
-	if not agent:
-		return None
-
+def _run_master_agent(message, document_content, image_data, image_mime_type, memory, target_language, plugins):
 	tools = ToolRegistry.get_function_declarations()
-	agent_response = agent.run(message, context, tools=tools)
+	try:
+		result = master_agent.run(
+			message,
+			context={
+				"document_content": document_content,
+				"memory": memory,
+				"target_language": target_language,
+			},
+			tools=tools,
+			image_data=image_data,
+			image_mime_type=image_mime_type,
+			plugins=plugins,
+		)
+	except Exception as e:
+		frappe.log_error(frappe.get_traceback(), "Master Agent Execution Error")
+		frappe.log_error(str(e), "Master Agent Error Detail")
+		return None
 
-	if agent_response:
-		reply = agent_response
-		try:
-			parsed = json.loads(agent_response)
-			if isinstance(parsed, dict) and "reply" in parsed:
-				reply = parsed["reply"]
-		except (json.JSONDecodeError, ValueError):
-			pass
+	if not result or not result.get("reply"):
+		return None
 
-		return {
-			"reply": reply,
-			"agent_used": agent_name,
-			"raw": agent_response,
-		}
-
-	return None
+	return {
+		"reply": result.get("reply"),
+		"action": result.get("action"),
+		"data": result.get("data"),
+		"chart": result.get("chart"),
+		"tools_used": result.get("tools_used") or [],
+	}
 
 
 @frappe.whitelist(allow_guest=True)
@@ -239,15 +225,22 @@ def chat(message, document_content=None, image_data=None, image_mime_type=None, 
 	if insights:
 		pass
 
-	agent_result = _try_agent_execution(message, document_content, image_data, image_mime_type, memory, target_language)
+	agent_result = _run_master_agent(message, document_content, image_data, image_mime_type, memory, target_language, plugins)
 	if agent_result:
 		save_memory(
 			user=user,
 			message=message,
 			response=agent_result["reply"],
-			context=f"Handled by agent: {agent_result.get('agent_used', 'unknown')}",
+			tool_used=", ".join(agent_result.get("tools_used") or []) or None,
+			context="Handled by master_agent",
 		)
 		final = {"reply": agent_result["reply"]}
+		if agent_result.get("action"):
+			final["action"] = agent_result["action"]
+		if agent_result.get("data"):
+			final["data"] = agent_result["data"]
+		if agent_result.get("chart"):
+			final["chart"] = agent_result["chart"]
 		if hasattr(frappe.flags, "chatbot_greeting") and frappe.flags.chatbot_greeting:
 			final["reply"] = frappe.flags.chatbot_greeting + final["reply"]
 		for plugin in plugins:
@@ -327,6 +320,37 @@ def chat(message, document_content=None, image_data=None, image_mime_type=None, 
 		plugin.on_chat_after(message=message, response=final)
 
 	return final
+
+
+@frappe.whitelist(allow_guest=True)
+def transcribe_audio(audio_data=None, audio_mime_type=None):
+	import base64
+
+	if not audio_data:
+		frappe.throw("No audio data provided")
+
+	try:
+		audio_bytes = base64.b64decode(audio_data)
+	except Exception:
+		frappe.throw("Invalid audio data received")
+
+	if len(audio_bytes) > 20 * 1024 * 1024:
+		frappe.throw("Audio file is too large. Please upload a file smaller than 20MB.")
+
+	mime_type = audio_mime_type or "audio/mpeg"
+
+	from google.generativeai import protos
+	model = genai.GenerativeModel("gemini-2.5-flash")
+	parts = [
+		"Transcribe the following audio recording into text. "
+		"Return only the transcribed text with no preamble, no quotes, and no commentary.",
+		protos.Part(inline_data=protos.Blob(mime_type=mime_type, data=audio_bytes)),
+	]
+	response = model.generate_content(parts)
+	text = (response.text or "").strip()
+	if not text:
+		frappe.throw("Could not transcribe the audio. The file may be unsupported or contain no speech.")
+	return {"text": text}
 
 
 @frappe.whitelist()
