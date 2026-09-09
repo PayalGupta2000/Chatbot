@@ -1,13 +1,14 @@
 import frappe
 import google.generativeai as genai
 import base64
+import json
 
 from chatbot.tools import ToolRegistry, extract_function_call
 from chatbot.plugins import PluginRegistry, discover_plugins
 from chatbot.agents.master_agent import master_agent
 from chatbot.proactive_engine import get_proactive_insights
 
-genai.configure(api_key=frappe.conf.get("gemini_api_key"))
+genai.configure(api_key=frappe.conf.get("gemini_api_key") or "")
 model = genai.GenerativeModel("gemini-2.5-flash")
 
 SYSTEM_PROMPT = """You are an advanced AI assistant inside the ERPNext system with multi-agent orchestration, proactive intelligence, and deep system integration.
@@ -82,16 +83,25 @@ Use the `get_insights` endpoint to proactively surface issues.
 
 
 def save_memory(user, message, response, context=None, tool_used=None):
-	frappe.get_doc(
-		{
-			"doctype": "AI Chat Memory",
-			"user": user,
+	existing = frappe.db.exists("AI Chat Memory", {"user": user})
+	if existing:
+		frappe.db.set_value("AI Chat Memory", existing, {
 			"message": message,
 			"conversation": response,
 			"context": context,
 			"tool_used": tool_used,
-		}
-	).insert(ignore_permissions=True)
+		})
+	else:
+		frappe.get_doc(
+			{
+				"doctype": "AI Chat Memory",
+				"user": user,
+				"message": message,
+				"conversation": response,
+				"context": context,
+				"tool_used": tool_used,
+			}
+		).insert(ignore_permissions=True)
 
 
 def get_memory(user):
@@ -222,8 +232,6 @@ def chat(message, document_content=None, image_data=None, image_mime_type=None, 
 		)
 
 	insights = get_proactive_insights(user)
-	if insights:
-		pass
 
 	agent_result = _run_master_agent(message, document_content, image_data, image_mime_type, memory, target_language, plugins)
 	if agent_result:
@@ -320,6 +328,227 @@ def chat(message, document_content=None, image_data=None, image_mime_type=None, 
 		plugin.on_chat_after(message=message, response=final)
 
 	return final
+
+
+def _suggest_followups(message, reply, target_language=None):
+	try:
+		prompt = (
+			"Based on this user message and assistant reply, suggest 3 short, natural follow-up "
+			"questions the user might ask next. Reply ONLY with a JSON array of strings. "
+			"Each item must be under 8 words.\n\n"
+			f"User: {message[:500]}\nAssistant: {reply[:1500]}"
+		)
+		if target_language:
+			prompt += f"\nWrite the suggestions in {target_language}."
+		resp = genai.GenerativeModel("gemini-2.5-flash").generate_content(
+			prompt,
+			generation_config={"max_output_tokens": 200, "temperature": 0.7},
+		)
+		text = (resp.text or "").strip().replace("```json", "").replace("```", "").strip()
+		data = json.loads(text)
+		if isinstance(data, list):
+			return [str(x).strip()[:60] for x in data[:3]]
+	except Exception:
+		frappe.log_error(frappe.get_traceback(), "Follow-up suggestion error")
+	return []
+
+
+def _truncate_tool_result(result):
+	try:
+		text = json.dumps(result, default=str)
+	except (TypeError, ValueError):
+		text = str(result)
+	if len(text) > 8000:
+		text = text[:8000] + "\n...(truncated)"
+	return text
+
+
+@frappe.whitelist(allow_guest=True)
+def chat_stream(message=None, document_content=None, image_data=None, image_mime_type=None, target_language=None):
+	"""Streaming chat endpoint. Returns a Server-Sent Events response."""
+	from werkzeug.wrappers import Response
+
+	from google.generativeai import protos
+
+	user = frappe.session.user or "Guest"
+	message = (message or "").strip()
+	if not message:
+		frappe.throw("Please enter a message.")
+
+	memory = get_memory(user)
+
+	discover_plugins()
+	plugins = PluginRegistry.get_all()
+	for plugin in plugins:
+		plugin.on_chat_before(
+			message=message,
+			document_content=document_content,
+			image_data=image_data,
+			image_mime_type=image_mime_type,
+			target_language=target_language,
+			memory=memory,
+		)
+
+	insights = get_proactive_insights(user)
+	tools = ToolRegistry.get_function_declarations()
+
+	def _sse(payload):
+		return f"data: {json.dumps(payload)}\n\n"
+
+	def _build_initial_parts():
+		parts = [SYSTEM_PROMPT]
+
+		if target_language:
+			parts.append(f"\n## Language Instruction\nRespond in {target_language}. Always reply in {target_language} regardless of the language the user wrote in.\n")
+
+		if insights:
+			insights_text = "\n".join(f"- [{i['type']}] {i['title']}" for i in insights)
+			parts.append(f"\n## Proactive Insights\n{insights_text}\n")
+
+		if document_content:
+			parts.append(f"\n## Uploaded Document Content\n{document_content[:8000]}\n\n")
+
+		for row in reversed(memory):
+			parts.append(f"\nUser: {row.message}\nAssistant: {row.conversation}")
+
+		parts.append(f"\nUser: {message}")
+
+		if image_data and image_mime_type:
+			try:
+				image_bytes = base64.b64decode(image_data)
+				parts.append(
+					protos.Part(inline_data=protos.Blob(mime_type=image_mime_type, data=image_bytes))
+				)
+			except Exception:
+				frappe.log_error(frappe.get_traceback(), "Chat Stream Image Decode Error")
+
+		parts.append("\nAssistant:")
+		return parts
+
+	chat_model = genai.GenerativeModel("gemini-2.5-flash")
+	chat = chat_model.start_chat()
+
+	def generate():
+		try:
+			stream_resp = chat.send_message(_build_initial_parts(), tools=tools or None, stream=True)
+		except Exception as e:
+			frappe.log_error(frappe.get_traceback(), "AI Chat Stream Generation Error")
+			yield _sse({"error": "I encountered an error processing your request. Please try again."})
+			return
+
+		last_text = ""
+		for chunk in stream_resp:
+			if chunk.text:
+				last_text += chunk.text
+				yield _sse({"delta": chunk.text, "reply": last_text})
+
+		function_call = extract_function_call(stream_resp)
+		tool_uses = []
+		final_action = None
+		final_data = None
+		final_chart = None
+		steps = 0
+
+		while function_call and steps < 6:
+			steps += 1
+			tool_name = function_call.name
+			tool_args = {key: value for key, value in function_call.args.items()}
+			tool_uses.append(tool_name)
+
+			for plugin in plugins:
+				plugin.on_tool_before(tool_name, **tool_args)
+
+			try:
+				result = ToolRegistry.execute(tool_name, **tool_args)
+			except Exception as e:
+				frappe.log_error(frappe.get_traceback(), f"Chat Stream Tool Error: {tool_name}")
+				result = {"reply": f"Error executing {tool_name}: {e}", "error": str(e)}
+
+			for plugin in plugins:
+				plugin.on_tool_after(tool_name, result=result, **tool_args)
+
+			if result.get("action"):
+				final_action = result["action"]
+			if result.get("data"):
+				final_data = result["data"]
+			if result.get("chart"):
+				final_chart = result["chart"]
+
+			try:
+				frappe.db.commit()
+			except Exception:
+				pass
+
+			yield _sse({"tool": tool_name})
+
+			stream_resp = chat.send_message(
+				protos.Content(
+					parts=[
+						protos.Part(
+							function_response=protos.FunctionResponse(
+								name=tool_name,
+								response={"result": _truncate_tool_result(result)},
+							)
+						)
+					]
+				),
+				tools=tools or None,
+				stream=True,
+			)
+			text = ""
+			for chunk in stream_resp:
+				if chunk.text:
+					text += chunk.text
+					last_text = text
+					yield _sse({"delta": chunk.text, "reply": last_text})
+
+			function_call = extract_function_call(stream_resp)
+
+		reply = last_text.strip()
+		if not reply:
+			reply = "I couldn't complete that task. Please try again with a bit more detail."
+
+		save_memory(
+			user=user,
+			message=message,
+			response=reply,
+			tool_used=", ".join(tool_uses) or None,
+			context="chat_stream",
+		)
+		try:
+			frappe.db.commit()
+		except Exception:
+			pass
+
+		done = {"done": True, "reply": reply}
+		if final_action:
+			done["action"] = final_action
+		if final_data:
+			done["data"] = final_data
+		if final_chart:
+			done["chart"] = final_chart
+
+		if hasattr(frappe.flags, "chatbot_greeting") and frappe.flags.chatbot_greeting:
+			done["reply"] = frappe.flags.chatbot_greeting + done["reply"]
+
+		followups = _suggest_followups(message, reply, target_language)
+		if followups:
+			done["followups"] = followups
+
+		for plugin in plugins:
+			plugin.on_chat_after(message=message, response={"reply": reply})
+
+		yield _sse(done)
+
+	return Response(
+		generate(),
+		mimetype="text/event-stream",
+		headers={
+			"Cache-Control": "no-cache",
+			"X-Accel-Buffering": "no",
+			"Connection": "keep-alive",
+		},
+	)
 
 
 @frappe.whitelist(allow_guest=True)

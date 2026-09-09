@@ -3,7 +3,13 @@ from datetime import datetime, timedelta
 
 
 def check_low_stock():
-	threshold = frappe.db.get_single_value("Stock Settings", "low_stock_threshold") or 10
+	# The Item module / Stock Settings may not exist in this site
+	if not frappe.db.table_exists("tabItem"):
+		return []
+	try:
+		threshold = frappe.db.get_single_value("Stock Settings", "low_stock_threshold") or 10
+	except (frappe.exceptions.ValidationError, Exception):
+		threshold = 10
 	low_items = frappe.db.sql("""
 		SELECT i.name, i.item_name, i.item_code, i.actual_qty
 		FROM `tabItem` i
@@ -18,31 +24,43 @@ def check_low_stock():
 
 def check_overdue_invoices():
 	today = datetime.now().date()
-	overdue = frappe.db.sql("""
-		SELECT si.name, si.customer, si.grand_total, si.outstanding_amount,
-			   si.due_date, si.posting_date
-		FROM `tabSales Invoice` si
-		WHERE si.docstatus = 1
-		AND si.outstanding_amount > 0
-		AND si.due_date < %s
-		ORDER BY si.due_date ASC
-		LIMIT 15
-	""", today, as_dict=True)
+	# The Sales Invoice module may not be installed in this site
+	if not frappe.db.table_exists("tabSales Invoice"):
+		return []
+	try:
+		overdue = frappe.db.sql("""
+			SELECT si.name, si.customer, si.grand_total, si.outstanding_amount,
+				   si.due_date, si.posting_date
+			FROM `tabSales Invoice` si
+			WHERE si.docstatus = 1
+			AND si.outstanding_amount > 0
+			AND si.due_date < %s
+			ORDER BY si.due_date ASC
+			LIMIT 15
+		""", today, as_dict=True)
+	except Exception:
+		overdue = []
 	return overdue
 
 
 def check_pending_approvals():
 	today = datetime.now().date()
-	pending = frappe.db.sql("""
-		SELECT la.name, la.employee, la.employee_name,
-			   la.leave_type, la.from_date, la.to_date,
-			   la.total_leave_days, la.status
-		FROM `tabLeave Application` la
-		WHERE la.status = 'Open'
-		AND la.from_date <= %s
-		ORDER BY la.from_date ASC
-		LIMIT 10
-	""", today, as_dict=True)
+	# The Leave Application module may not be installed in this site
+	if not frappe.db.table_exists("tabLeave Application"):
+		return []
+	try:
+		pending = frappe.db.sql("""
+			SELECT la.name, la.employee, la.employee_name,
+				   la.leave_type, la.from_date, la.to_date,
+				   la.total_leave_days, la.status
+			FROM `tabLeave Application` la
+			WHERE la.status = 'Open'
+			AND la.from_date <= %s
+			ORDER BY la.from_date ASC
+			LIMIT 10
+		""", today, as_dict=True)
+	except Exception:
+		pending = []
 	return pending
 
 
@@ -126,12 +144,20 @@ def scheduled_insight_check():
 					message_lines.append(ins["detail"])
 					message_lines.append("")
 				message = "\n".join(message_lines)
-				frappe.get_doc({
-					"doctype": "AI Chat Memory",
-					"user": user,
-					"message": "system:proactive_insights",
-					"conversation": message,
-					"context": "Proactive intelligence alert",
-				}).insert(ignore_permissions=True)
+				existing = frappe.db.exists("AI Chat Memory", {"user": user})
+				if existing:
+					frappe.db.set_value("AI Chat Memory", existing, {
+						"message": "system:proactive_insights",
+						"conversation": message,
+						"context": "Proactive intelligence alert",
+					})
+				else:
+					frappe.get_doc({
+						"doctype": "AI Chat Memory",
+						"user": user,
+						"message": "system:proactive_insights",
+						"conversation": message,
+						"context": "Proactive intelligence alert",
+					}).insert(ignore_permissions=True)
 		except Exception:
 			pass

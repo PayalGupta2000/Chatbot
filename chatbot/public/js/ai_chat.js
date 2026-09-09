@@ -48,6 +48,9 @@
 	let activeConversationId = conversations[0]?.id || createConversation();
 	let documents = loadDocuments();
 	let targetLanguage = loadLanguage();
+	const clientKey = "chatbot.client_id.v1";
+	let clientId = loadClientId();
+	let syncTimer = null;
 
 	function setStatus(state, msg) {
 		statusDot.className =
@@ -104,6 +107,91 @@
 			);
 		} catch (error) {
 			console.warn("Unable to save chat history:", error);
+		}
+		syncConversationToServer();
+	}
+
+	function loadClientId() {
+		try {
+			let id = window.localStorage.getItem(clientKey);
+			if (!id) {
+				id = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+				window.localStorage.setItem(clientKey, id);
+			}
+			return id;
+		} catch {
+			return "guest";
+		}
+	}
+
+	async function fetchConversationsFromServer() {
+		try {
+			const resp = await fetch(
+				"/api/method/chatbot.conversation_api.get_conversations",
+				{
+					method: "POST",
+					headers: { "Content-Type": "application/json", "X-Frappe-CSRF-Token": csrf },
+					body: JSON.stringify({ client_id: clientId }),
+				},
+			);
+			const data = await resp.json();
+			if (!resp.ok || !data?.message?.conversations) return null;
+			return data.message.conversations.map((item) => ({
+				id: item.id,
+				title: item.title || "New conversation",
+				updatedAt: item.updatedAt ? new Date(item.updatedAt).getTime() : Date.now(),
+				messages: Array.isArray(item.messages) ? item.messages : [],
+			}));
+		} catch (error) {
+			console.warn("Unable to load conversations from server:", error);
+			return null;
+		}
+	}
+
+	async function saveConversationToServer(conversation) {
+		if (!conversation) return;
+		try {
+			await fetch("/api/method/chatbot.conversation_api.save_conversation", {
+				method: "POST",
+				headers: { "Content-Type": "application/json", "X-Frappe-CSRF-Token": csrf },
+				body: JSON.stringify({
+					name: conversation.id,
+					title: conversation.title,
+					messages: conversation.messages,
+					client_id: clientId,
+				}),
+			});
+		} catch (error) {
+			console.warn("Unable to save conversation to server:", error);
+		}
+	}
+
+	function syncConversationToServer() {
+		clearTimeout(syncTimer);
+		syncTimer = setTimeout(() => saveConversationToServer(activeConversation()), 400);
+	}
+
+	async function deleteConversationOnServer(id) {
+		try {
+			await fetch("/api/method/chatbot.conversation_api.delete_conversation", {
+				method: "POST",
+				headers: { "Content-Type": "application/json", "X-Frappe-CSRF-Token": csrf },
+				body: JSON.stringify({ name: id, client_id: clientId }),
+			});
+		} catch (error) {
+			console.warn("Unable to delete conversation on server:", error);
+		}
+	}
+
+	async function clearConversationsOnServer() {
+		try {
+			await fetch("/api/method/chatbot.conversation_api.clear_all_conversations", {
+				method: "POST",
+				headers: { "Content-Type": "application/json", "X-Frappe-CSRF-Token": csrf },
+				body: JSON.stringify({ client_id: clientId }),
+			});
+		} catch (error) {
+			console.warn("Unable to clear conversations on server:", error);
 		}
 	}
 
@@ -250,6 +338,11 @@
 			action.type === "notification_updated"
 		) {
 			card.innerHTML = `<div class="action-card-icon">🔔</div><div class="action-card-body"><strong>Notification ${action.type === "notification_created" ? "Created" : "Updated"}</strong><div class="action-card-details"><span>DocType: ${escapeHtml(action.doctype)}</span><span>Event: ${escapeHtml(action.event)}</span></div></div>`;
+		} else if (action.type === "files_modified") {
+			const filesList = (action.files || [])
+				.map((f) => `<code>${escapeHtml(f)}</code>`)
+				.join("<br>");
+			card.innerHTML = `<div class="action-card-icon">🔧</div><div class="action-card-body"><strong>Agent Changes Applied</strong><div class="action-card-details"><span>${action.files?.length || 0} file(s) created or modified</span></div><div style="margin-top:6px">${filesList}</div></div>`;
 		}
 		return card;
 	}
@@ -488,20 +581,23 @@
 			bubble.textContent = content;
 		}
 		const contentWrap = document.createElement("div");
+		contentWrap.className = "content-wrap";
 		contentWrap.appendChild(bubble);
+		const actions = document.createElement("div");
+		actions.className = "message-actions";
+		contentWrap.appendChild(actions);
 		row.append(avatar, contentWrap);
 		chatBox.appendChild(row);
 		scrollToBottom();
-		return { row, bubble, contentWrap };
+		return { row, bubble, contentWrap, actions };
 	}
 
-	function addCopyButton(contentWrap, text) {
-		const actions = document.createElement("div");
-		actions.className = "message-actions";
+	function addCopyButton(actions, text) {
 		const button = document.createElement("button");
 		button.type = "button";
 		button.className = "copy-btn";
 		button.ariaLabel = "Copy";
+		button.title = "Copy";
 		button.innerHTML = copyIcon;
 		button.addEventListener("click", async () => {
 			try {
@@ -515,12 +611,9 @@
 			}
 		});
 		actions.appendChild(button);
-		contentWrap.appendChild(actions);
 	}
 
-	function addTranslateButton(contentWrap, text, role) {
-		const actions = document.createElement("div");
-		actions.className = "message-actions";
+	function addTranslateButton(actions, text, role) {
 		const langs = ["Spanish", "French", "German", "Japanese", "Hindi", "Arabic"];
 		const select = document.createElement("select");
 		select.className = "translate-select";
@@ -542,7 +635,7 @@
 				if (!resp.ok) throw new Error(data?.exc);
 				const translation = data?.message?.reply || text;
 				showToast(`Translated to ${lang}`);
-				const row = contentWrap.closest(".message-row");
+				const row = actions.closest(".message-row");
 				const bubble = row?.querySelector(".msg");
 				if (bubble)
 					bubble[role === "ai" ? "innerHTML" : "textContent"] =
@@ -556,12 +649,9 @@
 			}
 		});
 		actions.appendChild(select);
-		contentWrap.appendChild(actions);
 	}
 
-	function addEditButton(contentWrap, index, content) {
-		const actions = document.createElement("div");
-		actions.className = "message-actions";
+	function addEditButton(actions, index, content) {
 		const button = document.createElement("button");
 		button.type = "button";
 		button.className = "edit-btn";
@@ -577,12 +667,9 @@
 			messageInput.focus();
 		});
 		actions.appendChild(button);
-		contentWrap.appendChild(actions);
 	}
 
-	function addRetryButton(contentWrap, message, conversationId) {
-		const actions = document.createElement("div");
-		actions.className = "message-actions";
+	function addRetryButton(actions, message, conversationId) {
 		const button = document.createElement("button");
 		button.type = "button";
 		button.className = "copy-btn";
@@ -595,11 +682,10 @@
 				persistConversations();
 			}
 			activeConversationId = conversationId;
-			contentWrap.closest(".message-row")?.remove();
+			actions.closest(".message-row")?.remove();
 			sendMsg(message);
 		});
 		actions.appendChild(button);
-		contentWrap.appendChild(actions);
 	}
 
 	function setComposerState(sending) {
@@ -728,11 +814,35 @@
 			persistDocuments();
 			renderDocuments();
 			showToast(`Uploaded ${doc.file_name}`);
+			// Register the file with the current conversation so the agent knows
+			// it was uploaded and can read it from disk.
+			registerFileWithConversation(doc);
 			return doc;
 		} catch (err) {
 			showToast(`Upload failed: ${err.message}`);
 			throw err;
 		}
+	}
+
+	function registerFileWithConversation(doc) {
+		if (!activeConversationId) return;
+		fetch("/api/method/chatbot.agent_api.attach_files", {
+			method: "POST",
+			headers: { "Content-Type": "application/json", "X-Frappe-CSRF-Token": csrf },
+			body: JSON.stringify({
+				conversation_id: activeConversationId,
+				files: [
+					{
+						name: doc.name, // Frappe File doc name -> used to resolve on-disk path
+						file_name: doc.file_name,
+						file_url: doc.file_url,
+						notes: isImageType(doc.file_type) ? "image/screenshot" : "document",
+					},
+				],
+			}),
+		}).catch(() => {
+			/* best-effort; ignore registration failures */
+		});
 	}
 
 	async function deleteDocument(fileName) {
@@ -787,7 +897,7 @@
 			pending.bubble.innerHTML = formatAssistantReply(reply);
 			if (action) pending.contentWrap.appendChild(createActionCard(action));
 			appendDataAndChart(pending.contentWrap, msgData);
-			addCopyButton(pending.contentWrap, reply);
+			addCopyButton(pending.actions, reply);
 			addToConversation("ai", reply, action, msgData.chart, msgData.data);
 		} catch (error) {
 			pending.bubble.classList.remove("typing");
@@ -837,7 +947,7 @@
 			pending.bubble.innerHTML = formatAssistantReply(reply);
 			if (action) pending.contentWrap.appendChild(createActionCard(action));
 			appendDataAndChart(pending.contentWrap, msgData);
-			addCopyButton(pending.contentWrap, reply);
+			addCopyButton(pending.actions, reply);
 			addToConversation("ai", reply, action, msgData.chart, msgData.data);
 		} catch (error) {
 			pending.bubble.classList.remove("typing");
@@ -861,6 +971,7 @@
 			activeConversationId = conversations[0]?.id || createConversation();
 		}
 		persistConversations();
+		deleteConversationOnServer(id);
 		renderHistory();
 		renderConversation();
 	}
@@ -871,6 +982,7 @@
 		conversations = [];
 		activeConversationId = createConversation();
 		persistConversations();
+		clearConversationsOnServer();
 		renderHistory();
 		renderConversation();
 	}
@@ -887,7 +999,7 @@
 			const item = document.createElement("div");
 			item.className =
 				"history-item" + (conversation.id === activeConversationId ? " active" : "");
-			item.innerHTML = `<span class="h-title">${escapeHtml(conversation.title)}</span><button class="h-del" title="Delete conversation">✕</button>`;
+			item.innerHTML = `<span class="h-icon">💬</span><span class="h-title">${escapeHtml(conversation.title)}</span><button class="h-del" title="Delete conversation">✕</button>`;
 			item.addEventListener("click", () => selectConversation(conversation.id));
 			item.querySelector(".h-del").addEventListener("click", (e) =>
 				deleteConversation(conversation.id, e),
@@ -897,7 +1009,15 @@
 	}
 
 	function renderWelcome() {
-		chatBox.innerHTML = `<section class="welcome" id="welcome"><p class="eyebrow">Your work companion</p><h2>What can I help you<br>move forward today?</h2><p>Ask a question, explore an idea, upload a document, or get a quick hand with your next task.</p><div class="suggestions"><button class="suggestion" type="button">Summarise a document</button><button class="suggestion" type="button">Analyse an image</button><button class="suggestion" type="button">Import data from Excel</button><button class="suggestion" type="button">Build a report</button><button class="suggestion" type="button">Create a workflow</button><button class="suggestion" type="button">Show me sales data</button></div></section>`;
+		const suggestions = [
+			{ icon: "📄", label: "Summarise a document" },
+			{ icon: "🖼", label: "Analyse an image" },
+			{ icon: "📊", label: "Import data from Excel" },
+			{ icon: "📈", label: "Build a report" },
+			{ icon: "⚙️", label: "Create a workflow" },
+			{ icon: "💹", label: "Show me sales data" },
+		];
+		chatBox.innerHTML = `<section class="welcome" id="welcome"><div class="welcome-mark">✦</div><p class="eyebrow">Your work companion</p><h2>What can I help you<br>move forward today?</h2><p>Ask a question, explore an idea, upload a document, or get a quick hand with your next task.</p><div class="suggestions">${suggestions.map((s) => `<button class="suggestion" type="button" data-prompt="${escapeHtml(s.label)}"><span class="s-ico">${s.icon}</span>${escapeHtml(s.label)}</button>`).join("")}</div></section>`;
 		bindSuggestions();
 	}
 
@@ -921,12 +1041,12 @@
 					const tableEl = createDataTable(dataTable);
 					if (tableEl) message.contentWrap.appendChild(tableEl);
 				}
-				addCopyButton(message.contentWrap, content);
+				addCopyButton(message.actions, content);
 			} else {
-				addEditButton(message.contentWrap, index, content);
-				addCopyButton(message.contentWrap, content);
+				addEditButton(message.actions, index, content);
+				addCopyButton(message.actions, content);
 			}
-			addTranslateButton(message.contentWrap, content, role);
+			addTranslateButton(message.actions, content, role);
 		});
 		scrollToBottom();
 	}
@@ -955,28 +1075,58 @@
 		toast._hide = setTimeout(() => toast.classList.remove("show"), 2200);
 	}
 
+	function buildShareLink(conversationId) {
+		const base = window.location.origin + window.location.pathname;
+		return conversationId ? `${base}?conv=${conversationId}` : base;
+	}
+
+	function refreshShareLink() {
+		const input = document.getElementById("share-link-input");
+		if (input) input.value = buildShareLink(activeConversation()?.id);
+	}
+
 	function shareConversation() {
+		refreshShareLink();
+		const popover = document.getElementById("share-popover");
+		if (popover) popover.classList.toggle("open");
+	}
+
+	function closeSharePopover() {
+		document.getElementById("share-popover")?.classList.remove("open");
+	}
+
+	function shareVia(platform) {
 		const conversation = activeConversation();
-		if (!conversation?.messages.length) {
-			showToast("No messages to share");
+		const title = conversation?.title || "AI Assistant conversation";
+		const link = buildShareLink(conversation?.id);
+		const encLink = encodeURIComponent(link);
+		const encTitle = encodeURIComponent(title);
+		const intents = {
+			whatsapp: `https://wa.me/?text=${encTitle}%20${encLink}`,
+			facebook: `https://www.facebook.com/sharer/sharer.php?u=${encLink}`,
+			x: `https://twitter.com/intent/tweet?url=${encLink}&text=${encTitle}`,
+			telegram: `https://t.me/share/url?url=${encLink}&text=${encTitle}`,
+			linkedin: `https://www.linkedin.com/sharing/share-offsite/?url=${encLink}`,
+			email: `mailto:?subject=${encTitle}&body=${encodeURIComponent(`${title}\n\n${link}`)}`,
+		};
+		if (platform === "copy") {
+			navigator.clipboard
+				.writeText(link)
+				.then(() => {
+					showToast("Link copied to clipboard");
+					closeSharePopover();
+				})
+				.catch(() => showToast("Could not copy link"));
 			return;
 		}
-		const text = conversation.messages
-			.map(({ role, content }) => `${role === "user" ? "You" : "Assistant"}:\n${content}`)
-			.join("\n\n");
-		const shareData = { title: conversation.title, text: `${conversation.title}\n\n${text}` };
-		if (navigator.share && window.matchMedia("(max-width: 720px)").matches) {
-			navigator.share(shareData).catch(() => {});
-			return;
+		if (platform === "email") {
+			const anchor = document.createElement("a");
+			anchor.href = intents.email;
+			anchor.click();
+		} else if (intents[platform]) {
+			window.open(intents[platform], "_blank", "noopener,width=640,height=560");
 		}
-		navigator.clipboard
-			.writeText(shareData.text)
-			.then(() => {
-				showToast("Copied to clipboard — ready to share!");
-			})
-			.catch(() => {
-				showToast("Could not copy to clipboard");
-			});
+		closeSharePopover();
 	}
 
 	function exportConversation() {
@@ -994,8 +1144,138 @@
 		URL.revokeObjectURL(url);
 	}
 
+	// ─── Uploaded-file smart routing ────────────────────────────────────────
+	// Detects when a chat prompt references an uploaded image/document and
+	// returns a function that runs the appropriate analysis flow. Returns null
+	// when no uploaded file applies (normal agent flow).
+	function routeToUploadedFile(message) {
+		if (!documents.length) return null;
+		const text = message.toLowerCase();
+
+		const imageTokens = [
+			"screenshot", "image", "photo", "picture", "pic", "snapshot",
+			"look at", "analyse", "analyze", "see what", "ocr", "visual",
+			"screen capture", "what is in", "describe the image",
+		];
+		const docTokens = [
+			"summaris", "summariz", "summary", "table", "extract",
+			"document", "file", "pdf", "sheet", "spreadsheet",
+			"read this", "explain this file",
+		];
+
+		const wantsImage = imageTokens.some((t) => text.includes(t));
+		const wantsDoc = docTokens.some((t) => text.includes(t));
+
+		// If the user names a specific file, try to match it by name.
+		const namedImage = documents.find(
+			(d) => isImageType(d.file_type) && text.includes(d.file_name.toLowerCase()),
+		);
+		const namedDoc = documents.find(
+			(d) => !isImageType(d.file_type) && text.includes(d.file_name.toLowerCase()),
+		);
+
+		// Image intent: use the most recent uploaded image (or the named one).
+		if (wantsImage) {
+			const img = namedImage || documents.find((d) => isImageType(d.file_type));
+			if (img) {
+				return () => askAboutImage(img, message);
+			}
+		}
+
+		// Document intent: use the most recent uploaded document (or the named one).
+		if (wantsDoc) {
+			const doc = namedDoc || documents.find((d) => !isImageType(d.file_type));
+			if (doc) {
+				return () => askAboutDocument(doc, message);
+			}
+		}
+
+		return null;
+	}
+
+	// ─── Gemini streaming chat fallback ─────────────────────────────────
+	// When the opencode developer agent is unavailable, fall back to the
+	// Gemini-powered streaming chat endpoint which works standalone.
+	async function sendViaGeminiStream(message, pending) {
+		const bubble = pending.bubble;
+		bubble.classList.remove("typing");
+		bubble.textContent = "Thinking...";
+		scrollToBottom();
+
+		const resp = await fetch("/api/method/chatbot.ai_agent.chat_stream", {
+			method: "POST",
+			headers: { "Content-Type": "application/json", "X-Frappe-CSRF-Token": csrf },
+			body: JSON.stringify({
+				message,
+				target_language: targetLanguage || undefined,
+			}),
+		});
+
+		if (!resp.ok) {
+			const errData = await resp.json().catch(() => ({}));
+			throw new Error(errData?.exc || "The assistant could not respond.");
+		}
+
+		const reader = resp.body.getReader();
+		const decoder = new TextDecoder();
+		let fullReply = "";
+		let finalAction = null;
+		let finalData = null;
+		let finalChart = null;
+		let buffer = "";
+
+		while (true) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			buffer += decoder.decode(value, { stream: true });
+
+			const lines = buffer.split("\n");
+			buffer = lines.pop() || "";
+
+			for (const line of lines) {
+				if (!line.startsWith("data: ")) continue;
+				try {
+					const payload = JSON.parse(line.slice(6));
+					if (payload.error) {
+						bubble.classList.remove("typing");
+						bubble.textContent = payload.error;
+						return;
+					}
+					if (payload.delta) {
+						fullReply += payload.delta;
+						bubble.classList.remove("typing");
+						bubble.innerHTML = formatAssistantReply(fullReply);
+						scrollToBottom();
+					}
+					if (payload.action) finalAction = payload.action;
+					if (payload.data) finalData = payload.data;
+					if (payload.chart) finalChart = payload.chart;
+					if (payload.done) {
+						fullReply = payload.reply || fullReply;
+					}
+				} catch {
+					/* skip malformed SSE lines */
+				}
+			}
+		}
+
+		return { reply: fullReply, action: finalAction, data: finalData, chart: finalChart };
+	}
+
 	async function sendMsg(message = messageInput.value.trim()) {
 		if (!message || isSending) return;
+
+		// ── Smart file routing ──────────────────────────────────────────────
+		// If the user has uploaded files and the prompt references one of them
+		// (e.g. "summarize this screenshot"), handle it with the file/vision
+		// flow instead of sending it to the terminal-based developer agent
+		// (which has no access to the uploaded file).
+		const routed = routeToUploadedFile(message);
+		if (routed) {
+			await routed();
+			return;
+		}
+
 		createMessage(message, "user");
 		addToConversation("user", message);
 		messageInput.value = "";
@@ -1003,35 +1283,156 @@
 		setComposerState(true);
 		const conversationId = activeConversationId;
 		const pending = createMessage("", "ai", true);
+		const bubble = pending.bubble;
+		let fullReply = "";
+
+		const renderStreamed = () => {
+			bubble.classList.remove("typing");
+			bubble.innerHTML = formatAssistantReply(fullReply);
+			scrollToBottom();
+		};
+
 		try {
-			const response = await fetch("/api/method/chatbot.ai_agent.chat", {
-				method: "POST",
-				headers: { "Content-Type": "application/json", "X-Frappe-CSRF-Token": csrf },
-				body: JSON.stringify({ message, target_language: targetLanguage || undefined }),
-			});
-			const data = await response.json();
-			if (!response.ok) throw new Error(data?.exc || "The assistant could not respond.");
-			const reply =
-				data?.message?.reply || "I'm sorry, I couldn't generate a response just now.";
-			const action = data?.message?.action || null;
-			const msgData = data?.message || {};
-			pending.bubble.classList.remove("typing");
-			pending.bubble.innerHTML = formatAssistantReply(reply);
-			if (action) pending.contentWrap.appendChild(createActionCard(action));
-			appendDataAndChart(pending.contentWrap, msgData);
-			addCopyButton(pending.contentWrap, reply);
-			addToConversation("ai", reply, action, msgData.chart, msgData.data);
+			// Try the opencode developer agent first. If the opencode server is
+			// not running, fall back to the Gemini-powered streaming chat.
+			bubble.classList.remove("typing");
+			bubble.textContent = "The developer agent is working on this...";
+			scrollToBottom();
+
+			let opencodeAvailable = true;
+			let result = null;
+
+			try {
+				const kickResp = await fetch("/api/method/chatbot.agent_api.agent_chat", {
+					method: "POST",
+					headers: { "Content-Type": "application/json", "X-Frappe-CSRF-Token": csrf },
+					body: JSON.stringify({ message, conversation_id: conversationId }),
+				});
+
+				if (!kickResp.ok) {
+					const kickData = await kickResp.json().catch(() => ({}));
+					const errMsg = kickData?.exc || kickData?.message || "";
+					// If the opencode server is not reachable, fall back to Gemini
+					if (
+						errMsg.includes("not running") ||
+						errMsg.includes("not reachable") ||
+						errMsg.includes("opencode_server_unavailable") ||
+						kickResp.status === 500
+					) {
+						opencodeAvailable = false;
+					} else {
+						throw new Error(errMsg || "The assistant could not respond.");
+					}
+				} else {
+					const kickData = await kickResp.json();
+					const convId = kickData.message?.conversation_id || conversationId;
+
+					// Poll agent_result until the background job finishes.
+					const FAST_POLL_MS = 400;
+					const SLOW_POLL_MS = 1000;
+					const FAST_WINDOW = 75;
+					const MAX_POLLS = 600;
+					let pollCount = 0;
+					let startedAt = Date.now();
+
+					while (pollCount < MAX_POLLS) {
+						await new Promise((r) =>
+							setTimeout(r, pollCount <= FAST_WINDOW ? FAST_POLL_MS : SLOW_POLL_MS),
+						);
+						pollCount++;
+
+						const pollResp = await fetch("/api/method/chatbot.agent_api.agent_result", {
+							method: "POST",
+							headers: { "Content-Type": "application/json", "X-Frappe-CSRF-Token": csrf },
+							body: JSON.stringify({ conversation_id: convId }),
+						});
+
+						if (!pollResp.ok) continue;
+
+						const pollData = await pollResp.json();
+						const state = pollData.message?.status;
+
+						if (state === "done") {
+							result = pollData.message;
+							break;
+						}
+						if (state === "failed") {
+							// Agent failed — fall back to Gemini instead of erroring
+							opencodeAvailable = false;
+							break;
+						}
+						const elapsed = Math.round((Date.now() - startedAt) / 1000);
+						bubble.textContent = `The developer agent is working on this... (${elapsed}s)`;
+						scrollToBottom();
+					}
+
+					if (pollCount >= MAX_POLLS && !result) {
+						opencodeAvailable = false;
+					}
+				}
+			} catch (agentErr) {
+				console.warn("Opencode agent failed, falling back to Gemini:", agentErr);
+				opencodeAvailable = false;
+			}
+
+			// ── Fallback: Gemini streaming chat ──────────────────────────────
+			if (!opencodeAvailable || !result) {
+				const geminiResult = await sendViaGeminiStream(message, pending);
+				if (geminiResult) {
+					fullReply = geminiResult.reply || "";
+					const action = geminiResult.action || null;
+					const msgData = geminiResult || {};
+
+					bubble.classList.remove("typing");
+					bubble.innerHTML = formatAssistantReply(fullReply);
+					if (action) pending.contentWrap.appendChild(createActionCard(action));
+					appendDataAndChart(pending.contentWrap, msgData);
+					addCopyButton(pending.actions, fullReply);
+					addToConversation("ai", fullReply, action, msgData.chart, msgData.data);
+				}
+			} else {
+				// ── Opencode agent succeeded ────────────────────────────────
+				fullReply = result.reply || "";
+				const finalData = {
+					reply: fullReply,
+					action: result.action || null,
+				};
+				renderStreamed();
+
+				const action = finalData.action || null;
+				const msgData = finalData || {};
+				if (action) pending.contentWrap.appendChild(createActionCard(action));
+				appendDataAndChart(pending.contentWrap, msgData);
+				addCopyButton(pending.actions, fullReply);
+				addToConversation("ai", fullReply, action, msgData.chart, msgData.data);
+			}
 		} catch (error) {
-			pending.bubble.classList.remove("typing");
-			pending.bubble.textContent = "Something went wrong. Please try again.";
-			addRetryButton(pending.contentWrap, message, conversationId);
+			if (!fullReply) {
+				bubble.classList.remove("typing");
+				bubble.textContent = "Something went wrong. Please try again.";
+				addRetryButton(pending.actions, message, conversationId);
+				setStatus("error", "Failed");
+			}
 			console.error("Chat request failed:", error);
-			setStatus("error", "Failed");
 		} finally {
 			setComposerState(false);
 			messageInput.focus();
 			scrollToBottom();
 		}
+	}
+
+	function renderFollowups(contentWrap, followups) {
+		const chips = document.createElement("div");
+		chips.className = "followup-chips";
+		followups.forEach((question) => {
+			const button = document.createElement("button");
+			button.type = "button";
+			button.className = "followup-chip";
+			button.textContent = question;
+			button.addEventListener("click", () => sendMsg(question));
+			chips.appendChild(button);
+		});
+		contentWrap.appendChild(chips);
 	}
 
 	function resizeInput() {
@@ -1142,7 +1543,7 @@
 
 	function bindSuggestions() {
 		document.querySelectorAll(".suggestion").forEach((button) => {
-			button.addEventListener("click", () => sendMsg(button.textContent));
+			button.addEventListener("click", () => sendMsg(button.dataset.prompt || button.textContent));
 		});
 	}
 
@@ -1162,15 +1563,24 @@
 			e.preventDefault();
 			startNewConversation();
 		}
-		if ((e.ctrlKey || e.metaKey) && e.key === "/") {
-			e.preventDefault();
-			openShortcutsSection();
-		}
 	});
 	document.getElementById("voice-button").addEventListener("click", startVoice);
 	bindAudioUpload();
 	document.getElementById("new-chat").addEventListener("click", startNewConversation);
-	document.getElementById("share-chat").addEventListener("click", shareConversation);
+	document.getElementById("share-chat").addEventListener("click", (e) => {
+		e.stopPropagation();
+		shareConversation();
+	});
+	document.getElementById("share-link-input").addEventListener("click", (e) => e.target.select());
+	document.getElementById("share-popover").addEventListener("click", (e) => {
+		const option = e.target.closest(".share-option");
+		if (!option) return;
+		e.stopPropagation();
+		shareVia(option.dataset.share);
+	});
+	document.addEventListener("click", (e) => {
+		if (!document.getElementById("share-wrap")?.contains(e.target)) closeSharePopover();
+	});
 	document.getElementById("export-chat").addEventListener("click", exportConversation);
 	document.getElementById("clear-all").addEventListener("click", clearAllConversations);
 
@@ -1273,134 +1683,32 @@
 	renderDocuments();
 	bindSuggestions();
 
-	// ─── Shortcuts ─────────────────────────────────────────────────────
-
-	const shortcutsKey = "chatbot.shortcuts.v1";
-	const DEFAULT_SHORTCUTS = [
-		{
-			icon: "📊",
-			label: "Sales Overview",
-			prompt: "Show me a summary of sales for the last 30 days, including total revenue, top products, and a chart.",
-		},
-		{
-			icon: "📦",
-			label: "Low Stock",
-			prompt: "Check for items with low stock and suggest reorder quantities.",
-		},
-		{
-			icon: "🧾",
-			label: "Overdue Invoices",
-			prompt: "Find overdue sales invoices and summarise which customers need follow-up.",
-		},
-		{
-			icon: "📈",
-			label: "Build a Report",
-			prompt: "Build a report of recent sales with a bar chart and a markdown summary.",
-		},
-		{
-			icon: "⚙️",
-			label: "Create a Workflow",
-			prompt: "Create a purchase approval workflow with states, transitions, and role-based approvals.",
-		},
-		{
-			icon: "🔌",
-			label: "Create an API",
-			prompt: "Create a REST API endpoint that returns a list of items.",
-		},
-		{
-			icon: "📋",
-			label: "Import Data",
-			prompt: "Explain how to import data from an Excel file into a DocType.",
-		},
-		{
-			icon: "🩺",
-			label: "Business Health",
-			prompt: "Summarise today's business health: low stock, overdue invoices, pending approvals, and anomalies.",
-		},
-	];
-
-	let shortcuts = loadShortcuts();
-
-	function loadShortcuts() {
-		try {
-			const custom = JSON.parse(window.localStorage.getItem(shortcutsKey));
-			if (Array.isArray(custom)) {
-				return [...DEFAULT_SHORTCUTS, ...custom.filter((s) => s && s.label && s.prompt)];
-			}
-		} catch {}
-		return [...DEFAULT_SHORTCUTS];
+	async function hydrateConversations() {
+		const serverConvs = await fetchConversationsFromServer();
+		const localConvs = loadConversations();
+		if (serverConvs && serverConvs.length) {
+			conversations = serverConvs;
+		} else if (localConvs.length && serverConvs === null) {
+			conversations = localConvs;
+		} else if (localConvs.length) {
+			conversations = localConvs;
+			localConvs.forEach((conversation) => saveConversationToServer(conversation));
+		}
+		if (!conversations.length) {
+			activeConversationId = createConversation();
+		} else {
+			const params = new URLSearchParams(window.location.search);
+			const sharedId = params.get("conv");
+			activeConversationId =
+				sharedId && conversations.some((c) => c.id === sharedId)
+					? sharedId
+					: conversations[0].id;
+		}
+		renderHistory();
+		renderConversation();
 	}
 
-	function persistShortcuts() {
-		const custom = shortcuts.filter((s) => s.custom);
-		try {
-			window.localStorage.setItem(shortcutsKey, JSON.stringify(custom));
-		} catch {}
-	}
-
-	function renderShortcuts() {
-		const list = document.getElementById("shortcut-list");
-		if (!list) return;
-		list.replaceChildren();
-		shortcuts.forEach((shortcut) => {
-			const item = document.createElement("div");
-			item.className = "shortcut-item";
-			item.title = shortcut.prompt;
-			item.tabIndex = 0;
-			item.innerHTML = `<span class="shortcut-icon">${escapeHtml(shortcut.icon)}</span><span class="shortcut-label">${escapeHtml(shortcut.label)}</span>${shortcut.custom ? '<button class="shortcut-del" type="button" title="Delete shortcut">✕</button>' : ""}`;
-			item.addEventListener("click", (e) => {
-				if (e.target.closest(".shortcut-del")) return;
-				if (currentView !== "chat") switchView("chat");
-				sendMsg(shortcut.prompt);
-			});
-			item.addEventListener("keydown", (e) => {
-				if (e.key === "Enter" || e.key === " ") {
-					e.preventDefault();
-					if (currentView !== "chat") switchView("chat");
-					sendMsg(shortcut.prompt);
-				}
-			});
-			const del = item.querySelector(".shortcut-del");
-			if (del)
-				del.addEventListener("click", (e) => {
-					e.stopPropagation();
-					removeShortcut(shortcut);
-				});
-			list.appendChild(item);
-		});
-	}
-
-	function removeShortcut(shortcut) {
-		shortcuts = shortcuts.filter((s) => s !== shortcut);
-		persistShortcuts();
-		renderShortcuts();
-		showToast("Shortcut removed");
-	}
-
-	function addShortcut() {
-		const label = window.prompt("Shortcut name (e.g. Weekly sales recap)");
-		if (!label || !label.trim()) return;
-		const prompt = window.prompt(`Prompt for "${label.trim()}"`);
-		if (!prompt || !prompt.trim()) return;
-		shortcuts.push({ icon: "⚡", label: label.trim(), prompt: prompt.trim(), custom: true });
-		persistShortcuts();
-		renderShortcuts();
-		showToast("Shortcut added");
-	}
-
-	document.getElementById("shortcut-add").addEventListener("click", addShortcut);
-	renderShortcuts();
-
-	function openShortcutsSection() {
-		const section = document.getElementById("shortcut-list");
-		if (!section || !section.children.length) return;
-		section.scrollIntoView({ behavior: "smooth", block: "center" });
-		section.classList.add("highlight");
-		clearTimeout(section._hl);
-		section._hl = setTimeout(() => section.classList.remove("highlight"), 1400);
-		const first = section.querySelector(".shortcut-item");
-		if (first) first.focus({ preventScroll: true });
-	}
+	hydrateConversations();
 
 	// ─── Plugins Workspace ─────────────────────────────────────────────
 
@@ -1416,6 +1724,7 @@
 
 	function switchView(view) {
 		currentView = view;
+		closeSharePopover();
 		navChat.classList.toggle("active", view === "chat");
 		navPlugins.classList.toggle("active", view === "plugins");
 		chatShell.classList.toggle("hidden", view !== "chat");

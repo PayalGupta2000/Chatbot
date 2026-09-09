@@ -90,8 +90,11 @@ def _parse_pptx(file_path: str) -> str:
 
 def _parse_image(file_path: str) -> str:
 	from PIL import Image
-	img = Image.open(file_path)
-	return f"[Image: {Path(file_path).name} — {img.width}x{img.height}px, mode={img.mode}]"
+	try:
+		img = Image.open(file_path)
+		return f"[Image: {Path(file_path).name} — {img.width}x{img.height}px, mode={img.mode}]"
+	except Exception:
+		return f"[Image: {Path(file_path).name} — could not read image metadata]"
 
 
 @frappe.whitelist()
@@ -144,7 +147,14 @@ def get_document_content(file_name: str):
 def delete_document(file_name: str):
 	file_doc = frappe.get_doc("File", file_name)
 	file_doc.check_permission("delete")
-	frappe.delete_doc("File", file_name)
+	try:
+		frappe.delete_doc("File", file_name)
+	except frappe.exceptions.QueryTimeoutError:
+		# Document is locked by another user; force delete after a brief wait
+		frappe.db.rollback()
+		import time
+		time.sleep(1)
+		frappe.delete_doc("File", file_name, force=True)
 	return {"success": True}
 
 
